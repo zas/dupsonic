@@ -11,6 +11,10 @@ use tracing::{debug, warn};
 
 const ACOUSTID_API_URL: &str = "https://api.acoustid.org/v2/lookup";
 
+/// Minimum interval between AcoustID requests in milliseconds.
+/// The official rate limit is 3 requests per second.
+pub const RATE_LIMIT_MS: u64 = 334;
+
 /// AcoustID API response structures.
 #[derive(Debug, Deserialize)]
 struct AcoustIdResponse {
@@ -58,11 +62,10 @@ pub struct AcoustIdClient {
 
 impl AcoustIdClient {
     /// Create a new client with the given API key.
-    /// Rate limit: max 3 requests/second.
     pub fn new(api_key: String) -> Self {
         Self {
             api_key,
-            min_interval: Duration::from_millis(334), // ~3 req/s
+            min_interval: Duration::from_millis(RATE_LIMIT_MS),
             last_request: None,
         }
     }
@@ -94,23 +97,67 @@ impl AcoustIdClient {
             ("fingerprint", encoded_fp.as_str()),
         ];
 
-        let mut resp = match ureq::post(ACOUSTID_API_URL).send_form(params) {
-            Ok(r) => r,
-            Err(ureq::Error::StatusCode(503)) => {
-                // Service overloaded — back off and retry once
-                debug!("AcoustID returned 503, retrying after 2s...");
-                thread::sleep(Duration::from_secs(2));
-                match ureq::post(ACOUSTID_API_URL).send_form(params) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        anyhow::bail!("AcoustID HTTP error after retry: {e}");
+        // Retry with exponential backoff on server errors (5xx) and rate limits (429)
+        let max_retries = 3;
+        let mut resp = None;
+        for attempt in 0..=max_retries {
+            match ureq::post(ACOUSTID_API_URL).send_form(params) {
+                Ok(r) => {
+                    resp = Some(r);
+                    break;
+                }
+                Err(ureq::Error::StatusCode(429)) => {
+                    // Rate limited — back off longer
+                    if attempt == max_retries {
+                        anyhow::bail!("AcoustID rate limited (429) after {max_retries} retries");
                     }
+                    let backoff = Duration::from_secs(3u64.pow(attempt as u32 + 1));
+                    debug!(
+                        "AcoustID rate limited (429), retry {}/{max_retries} after {backoff:?}...",
+                        attempt + 1
+                    );
+                    thread::sleep(backoff);
+                }
+                Err(ureq::Error::StatusCode(status)) if status >= 500 => {
+                    if attempt == max_retries {
+                        anyhow::bail!("AcoustID HTTP {status} after {max_retries} retries");
+                    }
+                    let backoff = Duration::from_secs(2u64.pow(attempt as u32));
+                    debug!(
+                        "AcoustID returned {status}, retry {}/{max_retries} after {backoff:?}...",
+                        attempt + 1
+                    );
+                    thread::sleep(backoff);
+                }
+                Err(ureq::Error::Io(e)) => {
+                    if attempt == max_retries {
+                        anyhow::bail!("AcoustID network error after {max_retries} retries: {e}");
+                    }
+                    let backoff = Duration::from_secs(2u64.pow(attempt as u32));
+                    debug!(
+                        "AcoustID IO error: {e}, retry {}/{max_retries} after {backoff:?}...",
+                        attempt + 1
+                    );
+                    thread::sleep(backoff);
+                }
+                Err(ureq::Error::Timeout(_)) => {
+                    if attempt == max_retries {
+                        anyhow::bail!("AcoustID timeout after {max_retries} retries");
+                    }
+                    let backoff = Duration::from_secs(2u64.pow(attempt as u32));
+                    debug!(
+                        "AcoustID timeout, retry {}/{max_retries} after {backoff:?}...",
+                        attempt + 1
+                    );
+                    thread::sleep(backoff);
+                }
+                Err(e) => {
+                    // 4xx (except 429) and other non-retriable errors
+                    anyhow::bail!("AcoustID error: {e}");
                 }
             }
-            Err(e) => {
-                anyhow::bail!("AcoustID HTTP error: {e}");
-            }
-        };
+        }
+        let mut resp = resp.unwrap();
 
         self.last_request = Some(Instant::now());
 

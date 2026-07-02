@@ -100,12 +100,14 @@ pub fn run(db: &Database, api_key: Option<&str>, dupes_only: bool, threshold: f6
         }
     };
 
+    let reqs_per_sec = 1000.0 / crate::acoustid::RATE_LIMIT_MS as f64;
     println!(
-        "Phase 2: Querying AcoustID for {} files (rate-limited to 3 req/s)...",
-        still_unresolved.len()
+        "Phase 2: Querying AcoustID for {} files (~{:.0} req/s)...",
+        still_unresolved.len(),
+        reqs_per_sec,
     );
 
-    let eta_secs = still_unresolved.len() as f64 / 3.0;
+    let eta_secs = still_unresolved.len() as f64 / reqs_per_sec;
     println!(
         "  Estimated time: {:.0}s ({:.1} minutes)",
         eta_secs,
