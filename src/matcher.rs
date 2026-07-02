@@ -144,6 +144,43 @@ pub fn find_duplicates(
     Ok(groups)
 }
 
+/// Filter out duplicate groups where resolved MBIDs prove they're different recordings.
+///
+/// A group is removed if ALL files have a recording MBID and they don't all match.
+/// Groups where some files lack MBIDs are kept (benefit of the doubt).
+pub fn filter_by_mbids(groups: Vec<DuplicateGroup>, db: &Database) -> Vec<DuplicateGroup> {
+    let before = groups.len();
+    let filtered: Vec<DuplicateGroup> = groups
+        .into_iter()
+        .filter(|group| {
+            let mbids: Vec<Option<String>> = group
+                .files
+                .iter()
+                .map(|f| db.get_recording_mbid(&f.path).ok().flatten())
+                .collect();
+
+            // If any file lacks an MBID, we can't disprove — keep the group
+            if mbids.iter().any(|m| m.is_none()) {
+                return true;
+            }
+
+            // All files have MBIDs — check if they all match
+            let first = mbids[0].as_ref().unwrap();
+            mbids.iter().all(|m| m.as_ref().unwrap() == first)
+        })
+        .collect();
+
+    let removed = before - filtered.len();
+    if removed > 0 {
+        println!(
+            "  Removed {} group(s) with different recording MBIDs",
+            removed
+        );
+    }
+
+    filtered
+}
+
 /// Find duplicates of a specific file.
 ///
 /// Fingerprints the target file (or uses cached fingerprint), then compares it

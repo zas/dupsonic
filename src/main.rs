@@ -201,6 +201,9 @@ fn main() -> Result<()> {
                 matcher::find_duplicates(&db, threshold, same_tree)?
             };
 
+            // Filter out groups where MBIDs prove they're different recordings
+            let groups = matcher::filter_by_mbids(groups, &db);
+
             if let Some(ref cmd) = exec {
                 let strategy: dupsonic::keep::KeepStrategy = keep.parse()?;
                 dupsonic::exec::run(&groups, &strategy, cmd, apply)?;
