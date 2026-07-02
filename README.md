@@ -52,10 +52,14 @@ dupsonic fingerprints the actual audio (using [Chromaprint](https://acoustid.org
 dupsonic scan ~/Music                    # scan a directory
 dupsonic scan ~/Music /mnt/external      # scan multiple directories
 dupsonic scan -j 8 ~/Music              # use 8 parallel workers
+dupsonic scan --length 15 ~/Music       # fast scan (15s, like soundalike)
+dupsonic scan --length 300 ~/Music      # for podcasts/audiobooks with long shared intros
 dupsonic scan --force ~/Music           # re-fingerprint everything
 ```
 
 Fingerprints are cached in a local database — subsequent scans only process new or modified files.
+
+> **Note:** The `--length` value must be consistent across scans. Fingerprints generated with different lengths are not comparable — if you change `--length`, re-scan with `--force`. The default (120s) is a good balance of accuracy and speed for music.
 
 ### `find-dupes` — Find duplicates
 
