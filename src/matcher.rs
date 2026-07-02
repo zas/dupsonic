@@ -141,6 +141,83 @@ pub fn find_duplicates(
     Ok(groups)
 }
 
+/// Find duplicates of a specific file.
+///
+/// Fingerprints the target file (or uses cached fingerprint), then compares it
+/// against all fingerprints in the database. This is O(n) — much faster than
+/// the full LSH pipeline when you only care about one file.
+pub fn find_duplicates_for(
+    db: &Database,
+    target: &std::path::Path,
+    threshold: f64,
+) -> Result<Vec<DuplicateGroup>> {
+    use crate::fingerprint::fingerprint_file;
+
+    // Get or compute the target's fingerprint
+    let target = target.canonicalize().unwrap_or_else(|_| target.to_path_buf());
+
+    let target_fp = if let Some(cached) = db
+        .load_all_fingerprints()?
+        .into_iter()
+        .find(|f| f.path == target)
+    {
+        cached
+    } else {
+        // Not in DB yet — fingerprint it now
+        println!("Fingerprinting {}...", target.display());
+        let result = fingerprint_file(&target)?;
+        db.store_fingerprint(&target, &result)?;
+        crate::database::FileFingerprint {
+            path: target.clone(),
+            duration_secs: result.duration_secs,
+            fingerprint: result.fingerprint,
+        }
+    };
+
+    // Compare against all other fingerprints in the DB
+    let all_fps = db.load_all_fingerprints()?;
+    let mut matches: Vec<DuplicateFile> = Vec::new();
+
+    for fp in &all_fps {
+        if fp.path == target {
+            continue;
+        }
+
+        // Duration filter
+        if !durations_compatible(target_fp.duration_secs, fp.duration_secs) {
+            continue;
+        }
+
+        // Fingerprint comparison
+        let score = compare_fingerprints(&target_fp.fingerprint, &fp.fingerprint);
+        if score >= threshold {
+            matches.push(DuplicateFile {
+                path: fp.path.clone(),
+                duration_secs: fp.duration_secs,
+                score,
+            });
+        }
+    }
+
+    if matches.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Add the target file itself as the reference
+    matches.insert(
+        0,
+        DuplicateFile {
+            path: target,
+            duration_secs: target_fp.duration_secs,
+            score: 1.0,
+        },
+    );
+
+    matches.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+
+    Ok(vec![DuplicateGroup { files: matches }])
+}
+
 /// Generate candidate pairs using Locality-Sensitive Hashing (banding technique).
 ///
 /// The fingerprint is divided into bands of consecutive sub-fingerprints.
