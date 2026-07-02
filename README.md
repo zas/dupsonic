@@ -20,7 +20,7 @@ tar xzf dupsonic-macos-aarch64.tar.gz
 sudo mv dupsonic /usr/local/bin/
 ```
 
-Windows: download `dupsonic-windows-x86_64.zip` and add to PATH.
+Windows: download `dupsonic-windows-x86_64.zip` from the [releases page](https://github.com/zas/dupsonic/releases), extract `dupsonic.exe`, and place it somewhere in your PATH (e.g., `C:\Users\<you>\bin\`).
 
 ## Usage
 
