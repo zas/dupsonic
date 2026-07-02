@@ -271,12 +271,15 @@ Override with `--db <path>`.
 
 ```bash
 # Bash
+mkdir -p ~/.local/share/bash-completion/completions
 dupsonic completions bash > ~/.local/share/bash-completion/completions/dupsonic
 
-# Zsh
+# Zsh (add 'fpath=(~/.zfunc $fpath)' and 'autoload -Uz compinit && compinit' to .zshrc)
+mkdir -p ~/.zfunc
 dupsonic completions zsh > ~/.zfunc/_dupsonic
 
 # Fish
+mkdir -p ~/.config/fish/completions
 dupsonic completions fish > ~/.config/fish/completions/dupsonic.fish
 
 # PowerShell
