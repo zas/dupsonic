@@ -30,6 +30,8 @@ impl Database {
             PRAGMA journal_mode = WAL;
             PRAGMA synchronous = NORMAL;
             PRAGMA busy_timeout = 5000;
+            PRAGMA cache_size = -64000;
+            PRAGMA temp_store = MEMORY;
 
             CREATE TABLE IF NOT EXISTS files (
                 id INTEGER PRIMARY KEY,
@@ -75,6 +77,11 @@ impl Database {
         if !has_excluded {
             conn.execute_batch("ALTER TABLE files ADD COLUMN excluded INTEGER DEFAULT 0;")?;
         }
+
+        // Create indexes that depend on migrated columns
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_files_excluded ON files(excluded) WHERE excluded = 1;",
+        )?;
 
         Ok(Self {
             conn: Mutex::new(conn),
@@ -163,7 +170,7 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT path, duration_secs, fingerprint FROM files
-             WHERE fingerprint IS NOT NULL AND (excluded IS NULL OR excluded = 0)",
+             WHERE fingerprint IS NOT NULL AND COALESCE(excluded, 0) = 0",
         )?;
 
         let results = stmt
