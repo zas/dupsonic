@@ -73,10 +73,12 @@ impl AcoustIdClient {
     /// Look up a fingerprint against the AcoustID database.
     ///
     /// Returns the best matching result, or None if no match found.
+    /// The `on_retry` callback is called with a message when a retry occurs.
     pub fn lookup(
         &mut self,
         fingerprint: &[u32],
         duration_secs: f64,
+        on_retry: impl Fn(&str),
     ) -> Result<Option<LookupResult>> {
         self.rate_limit();
 
@@ -112,6 +114,7 @@ impl AcoustIdClient {
                         anyhow::bail!("AcoustID rate limited (429) after {max_retries} retries");
                     }
                     let backoff = Duration::from_secs(3u64.pow(attempt as u32 + 1));
+                    on_retry(&format!("rate limited, retrying in {backoff:?}..."));
                     debug!(
                         "AcoustID rate limited (429), retry {}/{max_retries} after {backoff:?}...",
                         attempt + 1
@@ -123,6 +126,9 @@ impl AcoustIdClient {
                         anyhow::bail!("AcoustID HTTP {status} after {max_retries} retries");
                     }
                     let backoff = Duration::from_secs(2u64.pow(attempt as u32));
+                    on_retry(&format!(
+                        "server error {status}, retrying in {backoff:?}..."
+                    ));
                     debug!(
                         "AcoustID returned {status}, retry {}/{max_retries} after {backoff:?}...",
                         attempt + 1
@@ -134,6 +140,7 @@ impl AcoustIdClient {
                         anyhow::bail!("AcoustID network error after {max_retries} retries: {e}");
                     }
                     let backoff = Duration::from_secs(2u64.pow(attempt as u32));
+                    on_retry(&format!("network error, retrying in {backoff:?}..."));
                     debug!(
                         "AcoustID IO error: {e}, retry {}/{max_retries} after {backoff:?}...",
                         attempt + 1
@@ -145,6 +152,7 @@ impl AcoustIdClient {
                         anyhow::bail!("AcoustID timeout after {max_retries} retries");
                     }
                     let backoff = Duration::from_secs(2u64.pow(attempt as u32));
+                    on_retry(&format!("timeout, retrying in {backoff:?}..."));
                     debug!(
                         "AcoustID timeout, retry {}/{max_retries} after {backoff:?}...",
                         attempt + 1

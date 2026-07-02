@@ -134,7 +134,9 @@ pub fn run(db: &Database, api_key: Option<&str>, dupes_only: bool, threshold: f6
                 .unwrap_or_default(),
         );
 
-        match client.lookup(&file.fingerprint, file.duration_secs) {
+        match client.lookup(&file.fingerprint, file.duration_secs, |msg| {
+            pb.set_message(msg.to_string());
+        }) {
             Ok(Some(result)) => {
                 if let Some(ref mbid) = result.recording_mbid {
                     debug!(
