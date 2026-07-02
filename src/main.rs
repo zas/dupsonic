@@ -79,6 +79,10 @@ enum Commands {
         /// Actually execute --exec (default is dry-run)
         #[arg(long)]
         apply: bool,
+
+        /// Don't filter groups by recording MBIDs
+        #[arg(long)]
+        no_mbid_filter: bool,
     },
 
     /// Show scan status and database statistics
@@ -194,6 +198,7 @@ fn main() -> Result<()> {
             exec,
             keep,
             apply,
+            no_mbid_filter,
         } => {
             let groups = if let Some(ref target) = r#for {
                 matcher::find_duplicates_for(&db, target, threshold)?
@@ -202,7 +207,11 @@ fn main() -> Result<()> {
             };
 
             // Filter out groups where MBIDs prove they're different recordings
-            let groups = matcher::filter_by_mbids(groups, &db);
+            let groups = if no_mbid_filter {
+                groups
+            } else {
+                matcher::filter_by_mbids(groups, &db)
+            };
 
             if let Some(ref cmd) = exec {
                 let strategy: dupsonic::keep::KeepStrategy = keep.parse()?;
