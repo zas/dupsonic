@@ -100,11 +100,26 @@ pub fn fingerprint_file(path: &Path) -> Result<FingerprintResult> {
         if !finished_fingerprinting {
             let spec = *decoded.spec();
             let num_frames = decoded.frames();
-            let mut sample_buf = SampleBuffer::<i16>::new(num_frames as u64, spec);
-            sample_buf.copy_interleaved_ref(decoded);
-            let samples = sample_buf.samples();
 
-            printer.consume(samples);
+            // Skip empty frames (symphonia panics on zero-length SampleBuffer)
+            if num_frames == 0 || spec.channels.count() == 0 {
+                continue;
+            }
+
+            // Symphonia can panic on malformed audio data (e.g., empty internal planes).
+            // Catch and skip these packets rather than aborting the whole file.
+            let samples_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut sample_buf = SampleBuffer::<i16>::new(num_frames as u64, spec);
+                sample_buf.copy_interleaved_ref(decoded);
+                sample_buf.samples().to_vec()
+            }));
+
+            let samples = match samples_result {
+                Ok(s) => s,
+                Err(_) => continue, // Skip this packet
+            };
+
+            printer.consume(&samples);
             total_samples += samples.len() as u64;
 
             if total_samples >= max_samples {
