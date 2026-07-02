@@ -17,7 +17,7 @@ symphonia = { version = "0.5", features = ["all"] }
 rusty-chromaprint = "0.3"
 
 # Database/cache
-rusqlite = { version = "0.35", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 
 # Parallelism
 rayon = "1.10"

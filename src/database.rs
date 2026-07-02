@@ -146,14 +146,14 @@ impl Database {
     pub fn stats(&self) -> Result<Stats> {
         let conn = self.conn.lock().unwrap();
 
-        let total_files: u64 =
+        let total_files: i64 =
             conn.query_row("SELECT COUNT(*) FROM files", [], |row| row.get(0))?;
-        let fingerprinted: u64 = conn.query_row(
+        let fingerprinted: i64 = conn.query_row(
             "SELECT COUNT(*) FROM files WHERE fingerprint IS NOT NULL",
             [],
             |row| row.get(0),
         )?;
-        let failed: u64 = conn.query_row(
+        let failed: i64 = conn.query_row(
             "SELECT COUNT(*) FROM files WHERE error IS NOT NULL",
             [],
             |row| row.get(0),
@@ -171,9 +171,9 @@ impl Database {
             .count() as u64;
 
         Ok(Stats {
-            total_files,
-            fingerprinted,
-            failed,
+            total_files: total_files as u64,
+            fingerprinted: fingerprinted as u64,
+            failed: failed as u64,
             stale,
         })
     }
