@@ -164,6 +164,25 @@ cargo build --release
 # Binary at target/release/dupsonic
 ```
 
+## Similar projects
+
+**[soundalike](https://codeberg.org/derat/soundalike)** by Daniel Erat is a well-established Go tool that also uses Chromaprint for acoustic duplicate detection. If you're looking for a mature, lightweight solution with built-in duplicate cleanup actions, check it out.
+
+Key differences:
+
+| | soundalike | dupsonic |
+|---|---|---|
+| External deps | Requires `fpcalc` installed | Single binary, no dependencies |
+| Fingerprint length | 15s (faster, but more false positives) | 120s (more accurate, slightly slower scans) |
+| Duration check | No | Yes (prevents false matches from shared intros) |
+| MusicBrainz integration | No | Yes (`identify` command) |
+| Duplicate cleanup | Yes (`-move-smaller`, `-move-interactive`) | Not yet |
+| Exclude false positives | Yes (`-exclude`) | Not yet |
+| Output formats | Human text | Human, JSON, JSON Lines |
+| Matching algorithm | Lookup table + all-alignment bitwise | LSH banding + aligned bitwise |
+
+Both tools support incremental scanning with SQLite caching and handle large collections. They make different trade-offs — soundalike is lighter and has built-in cleanup actions, dupsonic focuses on accuracy and MusicBrainz/Picard integration.
+
 ## Works with Picard
 
 dupsonic is designed to complement [MusicBrainz Picard](https://picard.musicbrainz.org/):
