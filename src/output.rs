@@ -66,6 +66,14 @@ struct DetailedJsonFile {
     format: String,
     size_bytes: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
+    sample_rate: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bits_per_sample: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    channels: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bitrate_kbps: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     recording_mbid: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     acoustid: Option<String>,
@@ -155,13 +163,33 @@ fn print_human_detailed(groups: &[DuplicateGroup], db: Option<&Database>) {
             let size = file_size(&file.path);
             let ext = file_extension(&file.path);
             let mbid = db.and_then(|d| d.get_recording_mbid(&file.path).ok().flatten());
+            let audio_info = tags::read_audio_info(&file.path).ok().flatten();
+
+            let audio_detail = if let Some(ref info) = audio_info {
+                let rate = info
+                    .sample_rate
+                    .map(|r| format!("{}kHz", r / 1000))
+                    .unwrap_or_default();
+                let bits = info
+                    .bits_per_sample
+                    .map(|b| format!("/{}bit", b))
+                    .unwrap_or_default();
+                let bitrate = info
+                    .bitrate_kbps
+                    .map(|b| format!(" ~{}kbps", b))
+                    .unwrap_or_default();
+                format!(" {}{}{}", rate, bits, bitrate)
+            } else {
+                String::new()
+            };
 
             println!(
-                "  [{:.0}%] {} ({}, {}, {})",
+                "  [{:.0}%] {} ({}, {},{} {})",
                 file.score * 100.0,
                 file.path.display(),
                 duration,
                 ext.to_uppercase(),
+                audio_detail,
                 format_size(size),
             );
             if let Some(mbid) = mbid {
@@ -191,13 +219,13 @@ fn build_detailed_group(
             let (recording_mbid, acoustid) = db
                 .map(|d| {
                     let mbid = d.get_recording_mbid(&f.path).ok().flatten();
-                    // Get acoustid from a direct query
                     let aid = get_acoustid(d, &f.path);
                     (mbid, aid)
                 })
                 .unwrap_or((None, None));
 
             let file_tags = tags::read_basic_tags(&f.path).ok().flatten();
+            let audio_info = tags::read_audio_info(&f.path).ok().flatten();
 
             DetailedJsonFile {
                 path: f.path.to_string_lossy().into_owned(),
@@ -205,6 +233,10 @@ fn build_detailed_group(
                 similarity: f.score,
                 format: file_extension(&f.path),
                 size_bytes: file_size(&f.path),
+                sample_rate: audio_info.as_ref().and_then(|a| a.sample_rate),
+                bits_per_sample: audio_info.as_ref().and_then(|a| a.bits_per_sample),
+                channels: audio_info.as_ref().and_then(|a| a.channels),
+                bitrate_kbps: audio_info.as_ref().and_then(|a| a.bitrate_kbps),
                 recording_mbid,
                 acoustid,
                 tags: file_tags.map(|t| FileTags {
