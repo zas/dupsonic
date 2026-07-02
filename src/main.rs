@@ -81,11 +81,11 @@ enum Commands {
         #[arg(long, env = "ACOUSTID_API_KEY")]
         api_key: Option<String>,
 
-        /// Only identify files that are part of duplicate groups
+        /// Identify all files, not just those in duplicate groups
         #[arg(long)]
-        dupes_only: bool,
+        all: bool,
 
-        /// Minimum similarity threshold for duplicate detection (used with --dupes-only)
+        /// Minimum similarity threshold for duplicate detection
         #[arg(short, long, default_value_t = 0.8)]
         threshold: f64,
     },
@@ -169,10 +169,10 @@ fn main() -> Result<()> {
         }
         Commands::Identify {
             api_key,
-            dupes_only,
+            all,
             threshold,
         } => {
-            dupsonic::identify::run(&db, api_key.as_deref(), dupes_only, threshold)?;
+            dupsonic::identify::run(&db, api_key.as_deref(), !all, threshold)?;
         }
     }
 

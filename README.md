@@ -76,8 +76,8 @@ dupsonic find-dupes --format jsonl       # JSON Lines (streaming)
 ### `identify` — Confirm duplicates via MusicBrainz
 
 ```bash
-dupsonic identify --dupes-only           # resolve files in duplicate groups
-dupsonic identify                        # resolve all unresolved files
+dupsonic identify                        # resolve files in duplicate groups (default)
+dupsonic identify --all                  # resolve all unresolved files
 ```
 
 Reads MusicBrainz Recording IDs from your file tags (instant, free). For untagged files, queries the [AcoustID](https://acoustid.org) service (rate-limited). Requires an API key:
