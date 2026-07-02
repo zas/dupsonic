@@ -1,12 +1,13 @@
 use anyhow::{Context, Result};
 use rusty_chromaprint::{Configuration, Fingerprinter};
 use std::path::Path;
-use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::DecoderOptions;
-use symphonia::core::formats::FormatOptions;
+use symphonia::core::audio::{Audio, GenericAudioBufferRef};
+use symphonia::core::codecs::audio::{AudioCodecParameters, AudioDecoderOptions};
+use symphonia::core::codecs::CodecParameters;
+use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::{FormatOptions, Track, TrackType};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::probe::Hint;
 
 /// Maximum duration to fingerprint (in seconds). Chromaprint only needs ~120s.
 const MAX_FINGERPRINT_DURATION_SECS: u64 = 120;
@@ -38,33 +39,38 @@ pub fn fingerprint_file(path: &Path) -> Result<FingerprintResult> {
         hint.with_extension(ext);
     }
 
-    let probed = symphonia::default::get_probe()
-        .format(
+    let mut format = symphonia::default::get_probe()
+        .probe(
             &hint,
             mss,
-            &FormatOptions::default(),
-            &MetadataOptions::default(),
+            FormatOptions::default(),
+            MetadataOptions::default(),
         )
         .with_context(|| format!("Failed to probe format: {}", path.display()))?;
 
-    let mut format = probed.format;
-
     let track = format
-        .default_track()
-        .ok_or_else(|| anyhow::anyhow!("No audio track found in: {}", path.display()))?;
+        .default_track(TrackType::Audio)
+        .ok_or_else(|| anyhow::anyhow!("No audio track found in: {}", path.display()))?
+        .clone();
 
-    let sample_rate = track
-        .codec_params
+    let audio_params = get_audio_codec_params(&track)
+        .ok_or_else(|| anyhow::anyhow!("No audio codec params in: {}", path.display()))?;
+
+    let sample_rate = audio_params
         .sample_rate
         .ok_or_else(|| anyhow::anyhow!("Unknown sample rate: {}", path.display()))?;
-    let channels = track.codec_params.channels.map(|c| c.count()).unwrap_or(2);
+    let channels = audio_params
+        .channels
+        .as_ref()
+        .map(|c| c.count())
+        .unwrap_or(2);
     let track_id = track.id;
 
     // Try to get duration from container metadata (most formats provide this)
-    let full_duration_secs = get_track_duration(track);
+    let full_duration_secs = get_track_duration(&track, sample_rate);
 
     let mut decoder = symphonia::default::get_codecs()
-        .make(&track.codec_params, &DecoderOptions::default())
+        .make_audio_decoder(&audio_params, &AudioDecoderOptions::default())
         .with_context(|| format!("Failed to create decoder: {}", path.display()))?;
 
     let mut printer = Fingerprinter::new(&Configuration::preset_test2());
@@ -78,7 +84,8 @@ pub fn fingerprint_file(path: &Path) -> Result<FingerprintResult> {
 
     loop {
         let packet = match format.next_packet() {
-            Ok(packet) => packet,
+            Ok(Some(packet)) => packet,
+            Ok(None) => break,
             Err(symphonia::core::errors::Error::IoError(ref e))
                 if e.kind() == std::io::ErrorKind::UnexpectedEof =>
             {
@@ -87,7 +94,7 @@ pub fn fingerprint_file(path: &Path) -> Result<FingerprintResult> {
             Err(e) => return Err(e.into()),
         };
 
-        if packet.track_id() != track_id {
+        if packet.track_id != track_id {
             continue;
         }
 
@@ -98,20 +105,17 @@ pub fn fingerprint_file(path: &Path) -> Result<FingerprintResult> {
         };
 
         if !finished_fingerprinting {
-            let spec = *decoded.spec();
-            let num_frames = decoded.frames();
+            let num_frames = generic_buf_frames(&decoded);
 
-            // Skip empty frames (symphonia panics on zero-length SampleBuffer)
-            if num_frames == 0 || spec.channels.count() == 0 {
+            // Skip empty frames
+            if num_frames == 0 {
                 continue;
             }
 
-            // Symphonia can panic on malformed audio data (e.g., empty internal planes).
-            // Catch and skip these packets rather than aborting the whole file.
+            // Convert decoded audio to interleaved i16 samples.
+            // Use catch_unwind as safety net for any panics on malformed data.
             let samples_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let mut sample_buf = SampleBuffer::<i16>::new(num_frames as u64, spec);
-                sample_buf.copy_interleaved_ref(decoded);
-                sample_buf.samples().to_vec()
+                generic_buf_to_i16_interleaved(&decoded)
             }));
 
             let samples = match samples_result {
@@ -124,14 +128,13 @@ pub fn fingerprint_file(path: &Path) -> Result<FingerprintResult> {
 
             if total_samples >= max_samples {
                 finished_fingerprinting = true;
-                // If we already know the full duration from metadata, stop decoding
                 if full_duration_secs.is_some() {
                     break;
                 }
             }
         } else {
             // Past fingerprint window, just counting samples for duration
-            let num_frames = decoded.frames();
+            let num_frames = generic_buf_frames(&decoded);
             total_samples += (num_frames * channels) as u64;
         }
     }
@@ -143,7 +146,6 @@ pub fn fingerprint_file(path: &Path) -> Result<FingerprintResult> {
         anyhow::bail!("Empty fingerprint for: {}", path.display());
     }
 
-    // Use container-reported duration if available, otherwise use decoded sample count
     let duration_secs = full_duration_secs
         .unwrap_or_else(|| total_samples as f64 / (sample_rate as f64 * channels as f64));
 
@@ -153,17 +155,63 @@ pub fn fingerprint_file(path: &Path) -> Result<FingerprintResult> {
     })
 }
 
-/// Extract track duration from symphonia's codec params / time base.
-fn get_track_duration(track: &symphonia::core::formats::Track) -> Option<f64> {
-    let n_frames = track.codec_params.n_frames?;
-    if let Some(tb) = track.codec_params.time_base {
-        let time = tb.calc_time(n_frames);
-        Some(time.seconds as f64 + time.frac)
+/// Extract AudioCodecParameters from a track.
+fn get_audio_codec_params(track: &Track) -> Option<AudioCodecParameters> {
+    match track.codec_params.as_ref()? {
+        CodecParameters::Audio(params) => Some(params.clone()),
+        _ => None,
+    }
+}
+
+/// Extract track duration from container metadata.
+fn get_track_duration(track: &Track, sample_rate: u32) -> Option<f64> {
+    if let (Some(tb), Some(duration)) = (track.time_base, track.duration) {
+        // duration is in timebase units; convert to seconds: duration * (numer / denom)
+        let secs =
+            duration.get() as f64 * tb.numer.get() as f64 / tb.denom.get() as f64;
+        Some(secs)
     } else {
-        track
-            .codec_params
-            .sample_rate
-            .map(|sr| n_frames as f64 / sr as f64)
+        track.num_frames.map(|n| n as f64 / sample_rate as f64)
+    }
+}
+
+/// Get the number of frames from a GenericAudioBufferRef.
+fn generic_buf_frames(buf: &GenericAudioBufferRef<'_>) -> usize {
+    match buf {
+        GenericAudioBufferRef::U8(b) => b.frames(),
+        GenericAudioBufferRef::U16(b) => b.frames(),
+        GenericAudioBufferRef::U24(b) => b.frames(),
+        GenericAudioBufferRef::U32(b) => b.frames(),
+        GenericAudioBufferRef::S8(b) => b.frames(),
+        GenericAudioBufferRef::S16(b) => b.frames(),
+        GenericAudioBufferRef::S24(b) => b.frames(),
+        GenericAudioBufferRef::S32(b) => b.frames(),
+        GenericAudioBufferRef::F32(b) => b.frames(),
+        GenericAudioBufferRef::F64(b) => b.frames(),
+    }
+}
+
+/// Convert any GenericAudioBufferRef to interleaved i16 samples.
+fn generic_buf_to_i16_interleaved(buf: &GenericAudioBufferRef<'_>) -> Vec<i16> {
+    macro_rules! convert {
+        ($b:expr) => {{
+            let mut out = vec![0i16; $b.frames() * $b.num_planes()];
+            $b.copy_to_slice_interleaved(&mut out);
+            out
+        }};
+    }
+
+    match buf {
+        GenericAudioBufferRef::U8(b) => convert!(b),
+        GenericAudioBufferRef::U16(b) => convert!(b),
+        GenericAudioBufferRef::U24(b) => convert!(b),
+        GenericAudioBufferRef::U32(b) => convert!(b),
+        GenericAudioBufferRef::S8(b) => convert!(b),
+        GenericAudioBufferRef::S16(b) => convert!(b),
+        GenericAudioBufferRef::S24(b) => convert!(b),
+        GenericAudioBufferRef::S32(b) => convert!(b),
+        GenericAudioBufferRef::F32(b) => convert!(b),
+        GenericAudioBufferRef::F64(b) => convert!(b),
     }
 }
 
@@ -242,7 +290,6 @@ mod tests {
 
     #[test]
     fn test_compare_half_matching() {
-        // Each sub-fingerprint has 16 matching bits out of 32
         let fp1 = vec![0x0000FFFF; 10];
         let fp2 = vec![0x00000000; 10];
         let score = compare_fingerprints(&fp1, &fp2);
@@ -253,7 +300,6 @@ mod tests {
     fn test_compare_different_lengths() {
         let fp1 = vec![0x12345678; 10];
         let fp2 = vec![0x12345678; 5];
-        // Should compare only the overlapping portion (5 elements)
         assert_eq!(compare_fingerprints(&fp1, &fp2), 1.0);
     }
 
@@ -264,38 +310,31 @@ mod tests {
 
     #[test]
     fn test_durations_compatible_small_diff() {
-        // MP3 padding typically adds ~0.05s
         assert!(durations_compatible(180.0, 180.5));
         assert!(durations_compatible(180.0, 182.0));
-        assert!(durations_compatible(180.0, 183.0)); // within 3s absolute
+        assert!(durations_compatible(180.0, 183.0));
     }
 
     #[test]
     fn test_durations_incompatible_large_diff() {
-        // 3 min vs 7 min — clearly different tracks
         assert!(!durations_compatible(180.0, 420.0));
-        // Same first 2 min but one file is much longer
         assert!(!durations_compatible(120.0, 300.0));
     }
 
     #[test]
     fn test_durations_compatible_short_tracks() {
-        // Short tracks: 30s vs 33s — within 3s absolute tolerance
         assert!(durations_compatible(30.0, 33.0));
-        // Short tracks: 30s vs 35s — exceeds 3s abs and 5% of 35 = 1.75s
         assert!(!durations_compatible(30.0, 35.0));
     }
 
     #[test]
     fn test_durations_compatible_unknown() {
-        // If either duration is unknown (0), don't filter
         assert!(durations_compatible(0.0, 180.0));
         assert!(durations_compatible(180.0, 0.0));
     }
 
     #[test]
     fn test_durations_compatible_long_tracks() {
-        // Long tracks: 10 min. 5% of 600 = 30s tolerance
         assert!(durations_compatible(600.0, 625.0));
         assert!(!durations_compatible(600.0, 650.0));
     }
