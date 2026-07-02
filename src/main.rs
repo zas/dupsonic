@@ -37,6 +37,10 @@ enum Commands {
         #[arg(short = 'j', long, default_value_t = num_cpus())]
         jobs: usize,
 
+        /// Max audio duration in seconds to fingerprint (default 120)
+        #[arg(short, long, default_value_t = 120)]
+        length: u64,
+
         /// Force re-fingerprinting of already-scanned files
         #[arg(long)]
         force: bool,
@@ -128,8 +132,13 @@ fn main() -> Result<()> {
     let db = database::Database::open(&db_path)?;
 
     match cli.command {
-        Commands::Scan { paths, jobs, force } => {
-            scanner::scan(&db, &paths, jobs, force)?;
+        Commands::Scan {
+            paths,
+            jobs,
+            length,
+            force,
+        } => {
+            scanner::scan(&db, &paths, jobs, length, force)?;
         }
         Commands::FindDupes {
             threshold,

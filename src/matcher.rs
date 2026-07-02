@@ -154,7 +154,7 @@ pub fn find_duplicates_for(
     target: &std::path::Path,
     threshold: f64,
 ) -> Result<Vec<DuplicateGroup>> {
-    use crate::fingerprint::fingerprint_file;
+    use crate::fingerprint::{fingerprint_file, DEFAULT_FINGERPRINT_DURATION_SECS};
 
     // Get or compute the target's fingerprint
     let target = target
@@ -170,7 +170,7 @@ pub fn find_duplicates_for(
     } else {
         // Not in DB yet — fingerprint it now
         println!("Fingerprinting {}...", target.display());
-        let result = fingerprint_file(&target)?;
+        let result = fingerprint_file(&target, DEFAULT_FINGERPRINT_DURATION_SECS)?;
         db.store_fingerprint(&target, &result)?;
         crate::database::FileFingerprint {
             path: target.clone(),

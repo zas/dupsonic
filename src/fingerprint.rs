@@ -10,7 +10,7 @@ use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 
 /// Maximum duration to fingerprint (in seconds). Chromaprint only needs ~120s.
-const MAX_FINGERPRINT_DURATION_SECS: u64 = 120;
+pub const DEFAULT_FINGERPRINT_DURATION_SECS: u64 = 120;
 
 /// Result of fingerprinting a single audio file.
 #[derive(Debug, Clone)]
@@ -26,10 +26,10 @@ pub struct FingerprintResult {
 /// Uses symphonia for decoding (supports mp3, ogg, flac, wav, aac, etc.)
 /// and rusty-chromaprint for fingerprint generation.
 ///
-/// The fingerprint is generated from the first 120s of audio, but `duration_secs`
-/// reports the full file duration (critical for deduplication since chromaprint
-/// can't distinguish files that only differ after the 2-minute mark).
-pub fn fingerprint_file(path: &Path) -> Result<FingerprintResult> {
+/// The fingerprint is generated from the first `max_duration_secs` of audio,
+/// but `duration_secs` reports the full file duration (critical for deduplication
+/// since chromaprint can't distinguish files that only differ after the fingerprinted portion).
+pub fn fingerprint_file(path: &Path, max_duration_secs: u64) -> Result<FingerprintResult> {
     let file =
         std::fs::File::open(path).with_context(|| format!("Failed to open: {}", path.display()))?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
@@ -78,7 +78,7 @@ pub fn fingerprint_file(path: &Path) -> Result<FingerprintResult> {
         .start(sample_rate, channels as u32)
         .map_err(|_| anyhow::anyhow!("Failed to start fingerprinter"))?;
 
-    let max_samples = MAX_FINGERPRINT_DURATION_SECS * sample_rate as u64 * channels as u64;
+    let max_samples = max_duration_secs * sample_rate as u64 * channels as u64;
     let mut total_samples: u64 = 0;
     let mut finished_fingerprinting = false;
 

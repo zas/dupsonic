@@ -16,7 +16,7 @@ const AUDIO_EXTENSIONS: &[&str] = &[
 ];
 
 /// Scan directories for audio files and fingerprint them.
-pub fn scan(db: &Database, paths: &[PathBuf], jobs: usize, force: bool) -> Result<()> {
+pub fn scan(db: &Database, paths: &[PathBuf], jobs: usize, length: u64, force: bool) -> Result<()> {
     info!("Discovering audio files...");
     let files = discover_audio_files(paths);
     info!("Found {} audio files", files.len());
@@ -57,7 +57,7 @@ pub fn scan(db: &Database, paths: &[PathBuf], jobs: usize, force: bool) -> Resul
 
     pool.install(|| {
         to_process.par_iter().for_each(|path| {
-            let result = fingerprint::fingerprint_file(path);
+            let result = fingerprint::fingerprint_file(path, length);
             match result {
                 Ok(fp_result) => {
                     if let Err(e) = db.store_fingerprint(path, &fp_result) {
