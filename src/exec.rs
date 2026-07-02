@@ -11,12 +11,12 @@ use crate::matcher::DuplicateGroup;
 /// For each group, selects the file to keep based on the strategy,
 /// then runs the command on all other files.
 ///
-/// If `confirm` is false, only shows what would happen (dry run).
+/// If `apply` is false, only shows what would happen (dry run).
 pub fn run(
     groups: &[DuplicateGroup],
     strategy: &KeepStrategy,
     command: &str,
-    confirm: bool,
+    apply: bool,
 ) -> Result<()> {
     if groups.is_empty() {
         println!("No duplicates found.");
@@ -54,7 +54,7 @@ pub fn run(
                     }
                 };
                 let expanded_cmd = command.replace("{}", &quoted);
-                if confirm {
+                if apply {
                     println!("  EXEC  {}", expanded_cmd);
                     match execute_command(&expanded_cmd) {
                         Ok(true) => {
@@ -78,7 +78,7 @@ pub fn run(
     }
 
     println!();
-    if confirm {
+    if apply {
         println!(
             "Done: {} executed, {} skipped, {} errors",
             total_exec, total_skipped, errors
@@ -88,7 +88,7 @@ pub fn run(
             "Dry run: would execute on {} files ({} groups skipped)",
             total_exec, total_skipped
         );
-        println!("Run with --confirm to apply.");
+        println!("Run with --apply to apply.");
     }
 
     Ok(())

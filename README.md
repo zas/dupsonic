@@ -80,16 +80,16 @@ dupsonic find-dupes --format jsonl       # JSON Lines (streaming)
 dupsonic find-dupes --exec "trash-put {}" --keep best
 
 # Actually execute
-dupsonic find-dupes --exec "rm {}" --keep best --confirm
+dupsonic find-dupes --exec "rm {}" --keep best --apply
 
 # Keep FLAC files, remove the rest
-dupsonic find-dupes --exec "rm {}" --keep ext:flac --confirm
+dupsonic find-dupes --exec "rm {}" --keep ext:flac --apply
 
 # Keep files in your curated library
-dupsonic find-dupes --exec "rm {}" --keep regex:"^/home/user/Music/Library/" --confirm
+dupsonic find-dupes --exec "rm {}" --keep regex:"^/home/user/Music/Library/" --apply
 
 # Move lossy copies to a folder
-dupsonic find-dupes --exec "mv {} /tmp/dupes/" --keep ext:flac,wav --confirm
+dupsonic find-dupes --exec "mv {} /tmp/dupes/" --keep ext:flac,wav --apply
 ```
 
 **`--keep` strategies** decide which file to preserve in each group:
@@ -105,7 +105,7 @@ dupsonic find-dupes --exec "mv {} /tmp/dupes/" --keep ext:flac,wav --confirm
 
 When multiple files match the keep strategy, the best quality among them is kept. When *no* file matches, the group is skipped entirely (nothing is executed).
 
-**Safety:** `--confirm` is required to execute. Without it, dupsonic only shows what would happen. Paths are properly shell-quoted to handle spaces, parentheses, and special characters safely.
+**Safety:** `--apply` is required to execute. Without it, dupsonic only shows what would happen. Paths are properly shell-quoted to handle spaces, parentheses, and special characters safely.
 
 ### `identify` — Confirm duplicates via MusicBrainz
 

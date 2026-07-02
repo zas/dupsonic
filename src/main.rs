@@ -78,7 +78,7 @@ enum Commands {
 
         /// Actually execute --exec (default is dry-run)
         #[arg(long)]
-        confirm: bool,
+        apply: bool,
     },
 
     /// Show scan status and database statistics
@@ -193,7 +193,7 @@ fn main() -> Result<()> {
             details,
             exec,
             keep,
-            confirm,
+            apply,
         } => {
             let groups = if let Some(ref target) = r#for {
                 matcher::find_duplicates_for(&db, target, threshold)?
@@ -203,7 +203,7 @@ fn main() -> Result<()> {
 
             if let Some(ref cmd) = exec {
                 let strategy: dupsonic::keep::KeepStrategy = keep.parse()?;
-                dupsonic::exec::run(&groups, &strategy, cmd, confirm)?;
+                dupsonic::exec::run(&groups, &strategy, cmd, apply)?;
             } else {
                 let db_ref = if details { Some(&db) } else { None };
                 output::print_results(&groups, format, details, db_ref)?;
