@@ -1,134 +1,173 @@
 # dupsonic
 
-A fast, cross-platform CLI tool for finding duplicate audio files using acoustic fingerprinting.
+Find duplicate audio files by how they **sound**, not by filename or tags.
 
-Unlike metadata-only tools (Czkawka, dupeGuru), this identifies duplicates by **how they sound** — the same recording encoded as MP3, OGG, FLAC, or any other format will be correctly identified as a duplicate.
+dupsonic uses acoustic fingerprinting to detect duplicates regardless of format, bitrate, or metadata — the same MP3 and FLAC of a track will be matched, even if their tags differ completely.
 
-## Motivation
-
-Users with large music collections frequently need to deduplicate files, but existing tools either:
-- Only compare metadata/tags (fails when same audio has different tags)
-- Only compare file hashes (fails when same audio is in different formats/bitrates)
-- Are platform-specific or have poor UX
-- Can't handle large collections (100k+ files)
-
-This tool uses [Chromaprint](https://acoustid.org/chromaprint) acoustic fingerprinting (the same technology behind AcoustID/MusicBrainz Picard's audio identification) to detect duplicates regardless of format, bitrate, or tag differences.
-
-See: [Community discussion](https://community.metabrainz.org/t/extremely-large-music-collection-needs-advice-on-what-dedupe-program-to-use/608781)
-
-## Features
-
-- **Acoustic fingerprinting** — identifies duplicates by audio content, not metadata
-- **Format-agnostic** — MP3 vs OGG vs FLAC vs WAV are correctly compared
-- **Incremental scanning** — SQLite cache means only new/modified files are re-fingerprinted
-- **Parallel processing** — uses all available CPU cores for fingerprinting
-- **Large collection support** — designed for 100k+ file collections (LSH-based matching)
-- **Duration-aware** — won't falsely match files that only share the same intro
-- **Multiple output formats** — human-readable, JSON, JSON Lines (for Picard plugin integration)
-- **Cross-platform** — runs on Linux, macOS, Windows
-
-## Installation
+## Quick start
 
 ```bash
+# Install
 cargo install --path .
-```
 
-## Usage
-
-### 1. Scan your music library
-
-```bash
-# Scan one or more directories
+# Scan your music library
 dupsonic scan ~/Music
 
-# Use more workers for faster scanning
-dupsonic scan -j 8 ~/Music /mnt/external/Music
-
-# Force re-scan of already-fingerprinted files
-dupsonic scan --force ~/Music
-```
-
-### 2. Find duplicates
-
-```bash
-# Find duplicates with default 80% similarity threshold
+# Find duplicates
 dupsonic find-dupes
 
-# Stricter matching (90% similarity)
-dupsonic find-dupes --threshold 0.9
-
-# JSON output (for scripting / Picard plugin)
-dupsonic find-dupes --format json
-
-# Only compare within the same directory tree
-dupsonic find-dupes --same-tree
+# See full details (format, bitrate, quality)
+dupsonic find-dupes --details
 ```
 
-### 3. Manage the cache
+Example output with `--details`:
+
+```
+── Duplicate Group 1 (2 files) ──
+  [100%] ~/Music/Artist/Album/track.flac (3:18, FLAC, 48kHz/24bit ~1606kbps 38.1 MB)
+  [97%]  ~/Music/Downloads/track.mp3 (3:18, MP3, 44kHz ~178kbps 3.7 MB)
+
+── Duplicate Group 2 (2 files) ──
+  [100%] ~/Music/Artist/Album/song.flac (2:52, FLAC, 44kHz/16bit ~992kbps 20.5 MB)
+  [97%]  ~/Music/Old/song.ogg (2:52, OGG, 44kHz ~160kbps 3.3 MB)
+```
+
+You can immediately see which copy is higher quality and decide what to keep.
+
+## Why dupsonic?
+
+Existing tools fail at this:
+
+- **Czkawka, dupeGuru** — only compare metadata or file hashes. Same song in FLAC and MP3? Not detected.
+- **Duplicate Cleaner** — claims audio comparison but [struggles with cross-format matching](https://community.metabrainz.org/t/extremely-large-music-collection-needs-advice-on-what-dedupe-program-to-use/608781).
+- **Manual comparison** — impossible with 10k+ files.
+
+dupsonic fingerprints the actual audio (using [Chromaprint](https://acoustid.org/chromaprint), the same technology behind MusicBrainz Picard's track identification) and compares the fingerprints to find duplicates.
+
+## Commands
+
+### `scan` — Fingerprint your library
 
 ```bash
-# Check database status
-dupsonic status
+dupsonic scan ~/Music                    # scan a directory
+dupsonic scan ~/Music /mnt/external      # scan multiple directories
+dupsonic scan -j 8 ~/Music              # use 8 parallel workers
+dupsonic scan --force ~/Music           # re-fingerprint everything
+```
 
-# Remove entries for deleted files
-dupsonic clean-cache
+Fingerprints are cached in a local database — subsequent scans only process new or modified files.
+
+### `find-dupes` — Find duplicates
+
+```bash
+dupsonic find-dupes                      # default 80% similarity threshold
+dupsonic find-dupes --threshold 0.9      # stricter matching
+dupsonic find-dupes --details            # show format, bitrate, tags
+dupsonic find-dupes --for ~/track.flac   # find dupes of one specific file
+dupsonic find-dupes --same-tree          # only compare within same directory tree
+dupsonic find-dupes --format json        # JSON output (for scripting)
+dupsonic find-dupes --format jsonl       # JSON Lines (streaming)
+```
+
+### `identify` — Confirm duplicates via MusicBrainz
+
+```bash
+dupsonic identify --dupes-only           # resolve files in duplicate groups
+dupsonic identify                        # resolve all unresolved files
+```
+
+Reads MusicBrainz Recording IDs from your file tags (instant, free). For untagged files, queries the [AcoustID](https://acoustid.org) service (rate-limited). Requires an API key:
+
+```bash
+export ACOUSTID_API_KEY=your_key_here
+dupsonic identify --dupes-only
+```
+
+Register for a free key at https://acoustid.org/new-application.
+
+### `status` / `clean-cache`
+
+```bash
+dupsonic status                          # show database stats
+dupsonic clean-cache                     # remove entries for deleted files
 ```
 
 ## Output formats
 
-### Human (default)
+**Human** (default) — for interactive use:
 ```
-── Duplicate Group 1 (3 files) ──
-  [100%] /home/user/Music/Artist/Album/track.flac (3:42)
-  [95%]  /home/user/Music/Downloads/track.mp3 (3:41)
-  [92%]  /home/user/Music/Old/track.ogg (3:42)
+── Duplicate Group 1 (2 files) ──
+  [100%] ~/Music/Artist/track.flac (3:42)
+  [95%]  ~/Music/Downloads/track.mp3 (3:41)
 ```
 
-### JSON
+**JSON** (`--format json`) — for scripting and Picard plugin integration:
 ```json
-[
-  {
-    "group_id": 1,
-    "files": [
-      {"path": "/home/user/Music/Artist/Album/track.flac", "duration_secs": 222.0, "similarity": 1.0},
-      {"path": "/home/user/Music/Downloads/track.mp3", "duration_secs": 221.0, "similarity": 0.95}
-    ]
-  }
-]
+[{"group_id": 1, "files": [{"path": "...", "duration_secs": 222.0, "similarity": 1.0}]}]
 ```
 
-## Design decisions
+With `--details`, JSON includes `format`, `size_bytes`, `sample_rate`, `bits_per_sample`, `channels`, `bitrate_kbps`, `recording_mbid`, `acoustid`, and `tags` (artist/title/album).
 
-| Decision | Rationale |
-|----------|-----------|
-| Rust | Cross-platform, fast, no runtime deps, single binary, callable from Picard plugin via subprocess |
-| rusty-chromaprint | Pure Rust port of Chromaprint with built-in fingerprint matching — no C library dependency |
-| Symphonia | Pure Rust audio decoder supporting all major formats — no FFmpeg dependency |
-| SQLite cache | Incremental scans are essential for large collections; WAL mode handles concurrent reads. SQLite is compiled from source (bundled) — no system library required |
-| LSH banding | O(n) candidate pair generation instead of O(n²) — enables 100k+ file collections |
-| Union-Find grouping | Transitive duplicate detection: if A≈B and B≈C, all three are grouped together |
-| Duration comparison | Chromaprint only fingerprints first 120s; full-duration check prevents false matches |
-| JSON Lines output | Streaming-friendly for Picard plugin integration |
+**JSON Lines** (`--format jsonl`) — one group per line, for streaming.
 
-## Notes
+## How it works
 
-- **Minimum duration**: Files shorter than ~3 seconds may not produce reliable fingerprints. Very short clips lack enough spectral information for accurate matching.
-- **Verbosity**: Use `-v` for progress info, `-vv` for debug output, `-vvv` for trace-level logging. You can also set `RUST_LOG=debug` for fine-grained control.
-- **Database location**: The default cache path is platform-specific (`~/.local/share/dupsonic/cache.db` on Linux, `~/Library/Application Support/dupsonic/` on macOS, `AppData\Roaming\dupsonic\` on Windows). Override with `--db <path>`.
+1. **Scan** — decode audio, generate [Chromaprint](https://acoustid.org/chromaprint) fingerprint (first 120s) + measure full duration
+2. **Cache** — store fingerprints in SQLite with file size/mtime for change detection
+3. **Find candidates** — [Locality-Sensitive Hashing](https://en.wikipedia.org/wiki/Locality-sensitive_hashing) (banding) finds candidate pairs in O(n) time
+4. **Filter** — reject candidates with incompatible durations (catches files that only share the same intro)
+5. **Verify** — compare candidate fingerprints with full bit-error-rate scoring
+6. **Group** — Union-Find groups duplicates transitively (if A≈B and B≈C, all three are grouped)
+7. **Identify** (optional) — confirm via MusicBrainz Recording IDs from tags or AcoustID
+
+## Performance
+
+Designed for large collections (100k+ files):
+
+- **Parallel scanning** — uses all CPU cores for fingerprinting
+- **Incremental** — only new/modified files are re-fingerprinted
+- **LSH matching** — O(n) candidate generation instead of O(n²) pairwise comparison
+- **Duration pre-filter** — skips expensive fingerprint comparison when durations don't match
 
 ## Supported formats
 
 MP3, FLAC, OGG/Vorbis, Opus, WAV, M4A/AAC, WMA, AIFF, APE, WavPack, Musepack, WebM/MP4 audio.
 
-## How it works
+## Installation
 
-1. **Scan**: Walk directories, decode audio files, generate Chromaprint fingerprint (first 120s) + full duration
-2. **Cache**: Store fingerprints in SQLite with file size/mtime for change detection
-3. **LSH**: Hash fingerprint bands to find candidate pairs in O(n) time
-4. **Filter**: Reject candidates with incompatible durations (>3s or >5% difference)
-5. **Match**: Verify candidates with full bit-error-rate fingerprint comparison
-6. **Group**: Use Union-Find to transitively group duplicates
-7. **Report**: Output results in the requested format
+Requires Rust 1.95+:
+
+```bash
+cargo install --path .
+```
+
+Or build from source:
+
+```bash
+git clone https://github.com/zas/dupsonic
+cd dupsonic
+cargo build --release
+# Binary at target/release/dupsonic
+```
+
+No external dependencies required — audio decoding (symphonia), fingerprinting (chromaprint), and database (SQLite) are all compiled from pure Rust/bundled source.
+
+## Works with Picard
+
+dupsonic is designed to complement [MusicBrainz Picard](https://picard.musicbrainz.org/):
+
+- **Before Picard**: find and remove duplicates so Picard doesn't have to process them
+- **After Picard**: use `identify --dupes-only` to leverage MBIDs that Picard wrote to your tags
+- **From Picard**: JSON output enables future plugin integration via subprocess
+
+## Database location
+
+The fingerprint cache is stored at a platform-specific location:
+- **Linux**: `~/.local/share/dupsonic/cache.db`
+- **macOS**: `~/Library/Application Support/dupsonic/cache.db`
+- **Windows**: `AppData\Roaming\dupsonic\cache.db`
+
+Override with `--db <path>`.
 
 ## License
 
