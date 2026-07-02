@@ -42,8 +42,18 @@ pub fn run(
             if j == keeper_idx {
                 println!("  KEEP  {}", file.path.display());
             } else {
-                let expanded_cmd =
-                    command.replace("{}", &shell_quote(&file.path.to_string_lossy()));
+                let quoted = match shell_quote(&file.path.to_string_lossy()) {
+                    Some(q) => q,
+                    None => {
+                        eprintln!(
+                            "  SKIP  {} (path contains control characters)",
+                            file.path.display()
+                        );
+                        errors += 1;
+                        continue;
+                    }
+                };
+                let expanded_cmd = command.replace("{}", &quoted);
                 if confirm {
                     println!("  EXEC  {}", expanded_cmd);
                     match execute_command(&expanded_cmd) {
@@ -95,7 +105,15 @@ fn execute_command(cmd: &str) -> Result<bool> {
 }
 
 /// Shell-quote a path for safe interpolation into a shell command.
-fn shell_quote(path: &str) -> String {
+/// Returns None if the path contains control characters (newlines, etc.)
+/// that could cause surprising shell behavior.
+fn shell_quote(path: &str) -> Option<String> {
+    // Reject paths with control characters (newlines, tabs, null bytes, etc.)
+    // These are extremely rare in real music files and could cause unexpected
+    // command behavior even with proper quoting.
+    if path.chars().any(|c| c.is_control()) {
+        return None;
+    }
     // Use single quotes, escaping any single quotes within the path
-    format!("'{}'", path.replace('\'', "'\\''"))
+    Some(format!("'{}'", path.replace('\'', "'\\''")))
 }
