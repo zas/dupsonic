@@ -31,16 +31,19 @@ pub struct DuplicateFile {
 //
 // With B bands of R rows each:
 // - P(candidate | similarity s) ≈ 1 - (1 - s^R)^B
-// - For s=0.8 (80% similarity), R=4, B=25: P ≈ 0.9997 (almost all true matches found)
-// - For s=0.5 (50% similarity), R=4, B=25: P ≈ 0.098 (few false candidates)
 //
-// This gives us O(n) candidate generation instead of O(n²).
+// Chromaprint sub-fingerprints are highly correlated (overlapping audio frames),
+// so we use small bands (R=2) with many bands (B=50) to ensure high recall.
+// - For s=0.9, R=2, B=50: P ≈ 1.0 (all true matches found)
+// - For s=0.5, R=2, B=50: P ≈ 1.0 (more candidates, but verification is fast)
+//
+// The bucket size cap (max 1000) prevents pathological blowup from common patterns.
 
 /// Number of rows per band (sub-fingerprints hashed together per band)
-const LSH_ROWS_PER_BAND: usize = 4;
+const LSH_ROWS_PER_BAND: usize = 2;
 
 /// Number of bands
-const LSH_NUM_BANDS: usize = 25;
+const LSH_NUM_BANDS: usize = 50;
 
 /// Find groups of duplicate files based on fingerprint similarity.
 ///
