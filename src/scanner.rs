@@ -36,7 +36,7 @@ pub fn scan(
     }
 
     // Build ignore glob set
-    let ignore_set = build_ignore_set(ignore_patterns)?;
+    let ignore_set = build_ignore_set(ignore_patterns, paths)?;
 
     let files = discover_audio_files(paths, &ignore_set);
     info!("Found {} audio files", files.len());
@@ -164,16 +164,54 @@ fn discover_audio_files(paths: &[PathBuf], ignore_set: &GlobSet) -> Vec<PathBuf>
 }
 
 /// Build a GlobSet from gitignore-style patterns.
-fn build_ignore_set(patterns: &[String]) -> Result<GlobSet> {
+/// Also reads patterns from `.dupsonic-ignore` files found in the scan paths.
+fn build_ignore_set(patterns: &[String], scan_paths: &[PathBuf]) -> Result<GlobSet> {
     let mut builder = GlobSetBuilder::new();
+
+    // Add CLI --ignore patterns
     for pattern in patterns {
-        // Support both "*.m4p" and "**/Podcasts/**" style patterns
-        let glob = Glob::new(pattern)
-            .or_else(|_| Glob::new(&format!("**/{}", pattern)))
-            .map_err(|e| anyhow::anyhow!("Invalid ignore pattern '{}': {}", pattern, e))?;
-        builder.add(glob);
+        add_glob_pattern(&mut builder, pattern)?;
     }
+
+    // Read .dupsonic-ignore files from scan paths and current directory
+    let mut ignore_files = vec![PathBuf::from(".dupsonic-ignore")];
+    for path in scan_paths {
+        let ignore_file = if path.is_dir() {
+            path.join(".dupsonic-ignore")
+        } else {
+            path.parent()
+                .map(|p| p.join(".dupsonic-ignore"))
+                .unwrap_or_default()
+        };
+        if !ignore_files.contains(&ignore_file) {
+            ignore_files.push(ignore_file);
+        }
+    }
+
+    for ignore_file in &ignore_files {
+        if ignore_file.is_file() {
+            if let Ok(content) = std::fs::read_to_string(ignore_file) {
+                for line in content.lines() {
+                    let line = line.trim();
+                    // Skip empty lines and comments
+                    if line.is_empty() || line.starts_with('#') {
+                        continue;
+                    }
+                    add_glob_pattern(&mut builder, line)?;
+                }
+            }
+        }
+    }
+
     Ok(builder.build()?)
+}
+
+fn add_glob_pattern(builder: &mut GlobSetBuilder, pattern: &str) -> Result<()> {
+    let glob = Glob::new(pattern)
+        .or_else(|_| Glob::new(&format!("**/{}", pattern)))
+        .map_err(|e| anyhow::anyhow!("Invalid ignore pattern '{}': {}", pattern, e))?;
+    builder.add(glob);
+    Ok(())
 }
 
 fn is_audio_file(path: &Path) -> bool {
