@@ -1,8 +1,10 @@
 pub mod acoustid;
 pub mod database;
+pub mod exec;
 pub mod fingerprint;
 pub mod fpcalc;
 pub mod identify;
+pub mod keep;
 pub mod matcher;
 pub mod output;
 pub mod scanner;

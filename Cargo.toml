@@ -39,6 +39,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # File walking
 walkdir = "2.5"
 
+# Regex for --keep strategy
+regex = "1.10"
+
 # Cross-platform paths
 directories = "6.0"
 

@@ -67,6 +67,18 @@ enum Commands {
         /// Include file details in output (size, format, tags, MBIDs)
         #[arg(long)]
         details: bool,
+
+        /// Command to run on duplicate files ({} = file path)
+        #[arg(long, value_name = "COMMAND")]
+        exec: Option<String>,
+
+        /// Strategy to decide which file to keep (default: best)
+        #[arg(long, default_value = "best")]
+        keep: String,
+
+        /// Actually execute --exec (default is dry-run)
+        #[arg(long)]
+        confirm: bool,
     },
 
     /// Show scan status and database statistics
@@ -179,14 +191,23 @@ fn main() -> Result<()> {
             format,
             r#for,
             details,
+            exec,
+            keep,
+            confirm,
         } => {
             let groups = if let Some(ref target) = r#for {
                 matcher::find_duplicates_for(&db, target, threshold)?
             } else {
                 matcher::find_duplicates(&db, threshold, same_tree)?
             };
-            let db_ref = if details { Some(&db) } else { None };
-            output::print_results(&groups, format, details, db_ref)?;
+
+            if let Some(ref cmd) = exec {
+                let strategy: dupsonic::keep::KeepStrategy = keep.parse()?;
+                dupsonic::exec::run(&groups, &strategy, cmd, confirm)?;
+            } else {
+                let db_ref = if details { Some(&db) } else { None };
+                output::print_results(&groups, format, details, db_ref)?;
+            }
         }
         Commands::Status => {
             let stats = db.stats()?;
