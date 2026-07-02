@@ -8,7 +8,7 @@ use std::path::Path;
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::FormatOptions;
 use symphonia::core::io::MediaSourceStream;
-use symphonia::core::meta::{MetadataOptions, StandardTag};
+use symphonia::core::meta::{MetadataOptions, RawValue, StandardTag};
 
 /// Extract the MusicBrainz Recording ID from a file's metadata tags.
 ///
@@ -36,6 +36,7 @@ pub fn read_recording_mbid(path: &Path) -> Result<Option<String>> {
     let metadata = format.metadata();
     if let Some(revision) = metadata.current() {
         for tag in &revision.media.tags {
+            // Check standard tags (Vorbis/FLAC/MP4)
             if let Some(std_tag) = tag.std.as_ref() {
                 // In file tags (Vorbis/ID3/MP4), MUSICBRAINZ_TRACKID has always been
                 // the Recording MBID. This is true for all versions of Picard.
@@ -50,6 +51,30 @@ pub fn read_recording_mbid(path: &Path) -> Result<Option<String>> {
                     let id = id.trim();
                     if !id.is_empty() {
                         return Ok(Some(id.to_string()));
+                    }
+                }
+            }
+
+            // Check raw UFID frame for ID3v2 (MP3 files)
+            // Picard stores the recording MBID as UFID with owner "http://musicbrainz.org"
+            if tag.raw.key == "UFID" {
+                // Check if the OWNER subfield is "http://musicbrainz.org"
+                let is_musicbrainz = tag.raw.sub_fields.as_ref().is_some_and(|sfs| {
+                    sfs.iter().any(|sf| {
+                        sf.field == "OWNER"
+                            && matches!(&sf.value, RawValue::String(s) if s.contains("musicbrainz.org"))
+                    })
+                });
+                if is_musicbrainz {
+                    // The UFID value is the MBID as ASCII bytes (may have trailing null)
+                    if let RawValue::Binary(b) = &tag.raw.value {
+                        let id = String::from_utf8_lossy(b)
+                            .trim_end_matches('\0')
+                            .trim()
+                            .to_string();
+                        if !id.is_empty() && id.len() == 36 {
+                            return Ok(Some(id));
+                        }
                     }
                 }
             }
