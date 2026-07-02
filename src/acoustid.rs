@@ -221,15 +221,15 @@ impl AcoustIdClient {
 }
 
 /// Encode a raw fingerprint (Vec<u32>) to the compressed+base64 format
-/// expected by the AcoustID API.
-fn encode_fingerprint(fingerprint: &[u32]) -> String {
+/// expected by the AcoustID API (and fpcalc output).
+pub fn encode_fingerprint(fingerprint: &[u32]) -> String {
     use rusty_chromaprint::{Configuration, FingerprintCompressor};
 
     let config = Configuration::preset_test2();
     let compressor = FingerprintCompressor::from(&config);
     let compressed = compressor.compress(fingerprint);
 
-    // AcoustID API expects standard base64 encoding of the compressed fingerprint.
+    // fpcalc uses URL-safe base64 without padding (- and _ instead of + and /)
     use base64::Engine;
-    base64::engine::general_purpose::STANDARD.encode(&compressed)
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&compressed)
 }

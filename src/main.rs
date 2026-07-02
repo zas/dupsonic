@@ -89,6 +89,21 @@ enum Commands {
         #[arg(short, long, default_value_t = 0.8)]
         threshold: f64,
     },
+
+    /// Drop-in replacement for fpcalc (compatible with Picard)
+    #[command(name = "fpcalc")]
+    Fpcalc {
+        /// Audio file to fingerprint
+        file: PathBuf,
+
+        /// Output as JSON (default, matches fpcalc -json)
+        #[arg(short, long, default_value_t = true)]
+        json: bool,
+
+        /// Max audio duration in seconds to fingerprint
+        #[arg(short, long, default_value_t = 120)]
+        length: u64,
+    },
 }
 
 fn num_cpus() -> usize {
@@ -173,6 +188,13 @@ fn main() -> Result<()> {
             threshold,
         } => {
             dupsonic::identify::run(&db, api_key.as_deref(), !all, threshold)?;
+        }
+        Commands::Fpcalc {
+            file,
+            json: _,
+            length,
+        } => {
+            dupsonic::fpcalc::run(&db, &file, length)?;
         }
     }
 

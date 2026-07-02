@@ -1,6 +1,7 @@
 pub mod acoustid;
 pub mod database;
 pub mod fingerprint;
+pub mod fpcalc;
 pub mod identify;
 pub mod matcher;
 pub mod output;
