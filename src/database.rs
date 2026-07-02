@@ -38,6 +38,7 @@ impl Database {
                 mtime_secs INTEGER NOT NULL,
                 duration_secs REAL,
                 fingerprint BLOB,
+                fingerprint_length INTEGER,
                 error TEXT,
                 scanned_at TEXT NOT NULL DEFAULT (datetime('now')),
                 recording_mbid TEXT,
@@ -63,52 +64,69 @@ impl Database {
             )?;
         }
 
+        let has_fingerprint_length: bool = conn
+            .prepare("SELECT fingerprint_length FROM files LIMIT 0")
+            .is_ok();
+        if !has_fingerprint_length {
+            conn.execute_batch("ALTER TABLE files ADD COLUMN fingerprint_length INTEGER;")?;
+        }
+
         Ok(Self {
             conn: Mutex::new(conn),
         })
     }
 
     /// Check if a file has already been fingerprinted and hasn't changed.
-    pub fn is_current(&self, path: &Path) -> Result<bool> {
+    /// Also checks that the fingerprint was generated with the same length setting.
+    pub fn is_current(&self, path: &Path, fingerprint_length: u64) -> Result<bool> {
         let meta = match std::fs::metadata(path) {
             Ok(m) => m,
             Err(_) => return Ok(false),
         };
 
         let conn = self.conn.lock().unwrap();
-        let result: Option<(i64, i64)> = conn
+        let result: Option<(i64, i64, Option<i64>)> = conn
             .query_row(
-                "SELECT size, mtime_secs FROM files WHERE path = ?1 AND fingerprint IS NOT NULL",
+                "SELECT size, mtime_secs, fingerprint_length FROM files WHERE path = ?1 AND fingerprint IS NOT NULL",
                 params![path.to_string_lossy().as_ref()],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .ok();
 
         match result {
-            Some((size, mtime)) => {
+            Some((size, mtime, stored_length)) => {
                 let file_size = meta.len() as i64;
                 let file_mtime = file_mtime_secs(&meta);
-                Ok(size == file_size && mtime == file_mtime)
+                let length_matches = stored_length
+                    .map(|l| l == fingerprint_length as i64)
+                    .unwrap_or(false);
+                Ok(size == file_size && mtime == file_mtime && length_matches)
             }
             None => Ok(false),
         }
     }
 
     /// Store a successful fingerprint result.
-    pub fn store_fingerprint(&self, path: &Path, result: &FingerprintResult) -> Result<()> {
+    pub fn store_fingerprint(
+        &self,
+        path: &Path,
+        result: &FingerprintResult,
+        fingerprint_length: u64,
+    ) -> Result<()> {
         let meta = std::fs::metadata(path)?;
         let fp_bytes = fingerprint_to_bytes(&result.fingerprint);
 
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT OR REPLACE INTO files (path, size, mtime_secs, duration_secs, fingerprint, error)
-             VALUES (?1, ?2, ?3, ?4, ?5, NULL)",
+            "INSERT OR REPLACE INTO files (path, size, mtime_secs, duration_secs, fingerprint, fingerprint_length, error)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL)",
             params![
                 path.to_string_lossy().as_ref(),
                 meta.len() as i64,
                 file_mtime_secs(&meta),
                 result.duration_secs,
                 fp_bytes,
+                fingerprint_length as i64,
             ],
         )?;
         Ok(())
@@ -351,7 +369,7 @@ mod tests {
             duration_secs: 180.5,
         };
 
-        db.store_fingerprint(&path, &result).unwrap();
+        db.store_fingerprint(&path, &result, 120).unwrap();
 
         let loaded = db.load_all_fingerprints().unwrap();
         assert_eq!(loaded.len(), 1);
@@ -376,17 +394,17 @@ mod tests {
             duration_secs: 60.0,
         };
 
-        db.store_fingerprint(&path, &result).unwrap();
+        db.store_fingerprint(&path, &result, 120).unwrap();
 
         // File hasn't changed, should be current
-        assert!(db.is_current(&path).unwrap());
+        assert!(db.is_current(&path, 120).unwrap());
     }
 
     #[test]
     fn test_is_current_nonexistent_file() {
         let (db, _dir) = temp_db();
         let path = PathBuf::from("/nonexistent/file.mp3");
-        assert!(!db.is_current(&path).unwrap());
+        assert!(!db.is_current(&path, 120).unwrap());
     }
 
     #[test]
@@ -423,7 +441,7 @@ mod tests {
             duration_secs: 120.0,
         };
 
-        db.store_fingerprint(tmp1.path(), &fp).unwrap();
+        db.store_fingerprint(tmp1.path(), &fp, 120).unwrap();
         db.store_error(tmp2.path(), "failed").unwrap();
 
         let stats = db.stats().unwrap();
@@ -443,7 +461,7 @@ mod tests {
             fingerprint: vec![0xBBBBBBBB],
             duration_secs: 90.0,
         };
-        db.store_fingerprint(&path, &fp).unwrap();
+        db.store_fingerprint(&path, &fp, 120).unwrap();
 
         // File still exists
         assert_eq!(db.clean_stale().unwrap(), 0);
@@ -477,14 +495,14 @@ mod tests {
             fingerprint: vec![0x11111111],
             duration_secs: 60.0,
         };
-        db.store_fingerprint(&path, &fp1).unwrap();
+        db.store_fingerprint(&path, &fp1, 120).unwrap();
 
         // Re-store with different fingerprint (simulating rescan)
         let fp2 = crate::fingerprint::FingerprintResult {
             fingerprint: vec![0x22222222],
             duration_secs: 120.0,
         };
-        db.store_fingerprint(&path, &fp2).unwrap();
+        db.store_fingerprint(&path, &fp2, 120).unwrap();
 
         let loaded = db.load_all_fingerprints().unwrap();
         assert_eq!(loaded.len(), 1);

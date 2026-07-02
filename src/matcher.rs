@@ -171,7 +171,7 @@ pub fn find_duplicates_for(
         // Not in DB yet — fingerprint it now
         println!("Fingerprinting {}...", target.display());
         let result = fingerprint_file(&target, DEFAULT_FINGERPRINT_DURATION_SECS)?;
-        db.store_fingerprint(&target, &result)?;
+        db.store_fingerprint(&target, &result, DEFAULT_FINGERPRINT_DURATION_SECS)?;
         crate::database::FileFingerprint {
             path: target.clone(),
             duration_secs: result.duration_secs,

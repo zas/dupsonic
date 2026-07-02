@@ -256,7 +256,7 @@ fn test_full_pipeline_finds_duplicates() {
     // Fingerprint all files
     for path in [&dup1, &dup2, &dup3, &diff] {
         let result = fingerprint_file(path).unwrap();
-        db.store_fingerprint(path, &result).unwrap();
+        db.store_fingerprint(path, &result, 120).unwrap();
     }
 
     // Find duplicates
@@ -299,7 +299,7 @@ fn test_pipeline_respects_duration_filter() {
 
     for path in [&short, &long] {
         let result = fingerprint_file(path).unwrap();
-        db.store_fingerprint(path, &result).unwrap();
+        db.store_fingerprint(path, &result, 120).unwrap();
     }
 
     let groups = find_duplicates(&db, 0.8, false).unwrap();
@@ -329,7 +329,7 @@ fn test_pipeline_single_file() {
     let wav = dir.path().join("only.wav");
     generate_wav(440.0, 15.0, 44100, &wav);
     let result = fingerprint_file(&wav).unwrap();
-    db.store_fingerprint(&wav, &result).unwrap();
+    db.store_fingerprint(&wav, &result, 120).unwrap();
 
     let groups = find_duplicates(&db, 0.8, false).unwrap();
     assert_eq!(groups.len(), 0, "Single file can't be a duplicate");
@@ -345,15 +345,15 @@ fn test_incremental_scan_detection() {
     generate_wav(440.0, 10.0, 44100, &wav);
 
     let result = fingerprint_file(&wav).unwrap();
-    db.store_fingerprint(&wav, &result).unwrap();
+    db.store_fingerprint(&wav, &result, 120).unwrap();
 
     // File hasn't changed — should be detected as current
-    assert!(db.is_current(&wav).unwrap());
+    assert!(db.is_current(&wav, 120).unwrap());
 
     // Modify the file
     std::thread::sleep(std::time::Duration::from_millis(1100)); // ensure mtime changes
     generate_wav(880.0, 10.0, 44100, &wav);
 
     // Now it should need re-scanning
-    assert!(!db.is_current(&wav).unwrap());
+    assert!(!db.is_current(&wav, 120).unwrap());
 }

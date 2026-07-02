@@ -27,7 +27,7 @@ pub fn scan(db: &Database, paths: &[PathBuf], jobs: usize, length: u64, force: b
     } else {
         files
             .into_iter()
-            .filter(|f| !db.is_current(f).unwrap_or(false))
+            .filter(|f| !db.is_current(f, length).unwrap_or(false))
             .collect()
     };
 
@@ -60,7 +60,7 @@ pub fn scan(db: &Database, paths: &[PathBuf], jobs: usize, length: u64, force: b
             let result = fingerprint::fingerprint_file(path, length);
             match result {
                 Ok(fp_result) => {
-                    if let Err(e) = db.store_fingerprint(path, &fp_result) {
+                    if let Err(e) = db.store_fingerprint(path, &fp_result, length) {
                         warn!("Failed to store fingerprint for {}: {}", path.display(), e);
                         error_count.fetch_add(1, Ordering::Relaxed);
                     } else {
