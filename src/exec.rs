@@ -83,6 +83,9 @@ pub fn run(
             "Done: {} executed, {} skipped, {} errors",
             total_exec, total_skipped, errors
         );
+        if total_exec > 0 {
+            println!("Tip: run 'dupsonic clean-cache' to remove stale entries from the database.");
+        }
     } else {
         println!(
             "Dry run: would execute on {} files ({} groups skipped)",
