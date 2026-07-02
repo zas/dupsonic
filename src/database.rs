@@ -71,6 +71,11 @@ impl Database {
             conn.execute_batch("ALTER TABLE files ADD COLUMN fingerprint_length INTEGER;")?;
         }
 
+        let has_excluded: bool = conn.prepare("SELECT excluded FROM files LIMIT 0").is_ok();
+        if !has_excluded {
+            conn.execute_batch("ALTER TABLE files ADD COLUMN excluded INTEGER DEFAULT 0;")?;
+        }
+
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -153,11 +158,12 @@ impl Database {
         Ok(())
     }
 
-    /// Load all fingerprinted files from the database.
+    /// Load all fingerprinted files from the database (excluding excluded files).
     pub fn load_all_fingerprints(&self) -> Result<Vec<FileFingerprint>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT path, duration_secs, fingerprint FROM files WHERE fingerprint IS NOT NULL",
+            "SELECT path, duration_secs, fingerprint FROM files
+             WHERE fingerprint IS NOT NULL AND (excluded IS NULL OR excluded = 0)",
         )?;
 
         let results = stmt
@@ -302,6 +308,40 @@ impl Database {
             )
             .ok();
         Ok(result)
+    }
+
+    /// Exclude a file from duplicate results.
+    pub fn exclude_file(&self, path: &Path) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn.execute(
+            "UPDATE files SET excluded = 1 WHERE path = ?1",
+            params![path.to_string_lossy().as_ref()],
+        )?;
+        Ok(rows > 0)
+    }
+
+    /// Re-include a previously excluded file.
+    pub fn include_file(&self, path: &Path) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn.execute(
+            "UPDATE files SET excluded = 0 WHERE path = ?1",
+            params![path.to_string_lossy().as_ref()],
+        )?;
+        Ok(rows > 0)
+    }
+
+    /// List all excluded files.
+    pub fn list_excluded(&self) -> Result<Vec<PathBuf>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT path FROM files WHERE excluded = 1")?;
+        let results = stmt
+            .query_map([], |row| {
+                let path: String = row.get(0)?;
+                Ok(PathBuf::from(path))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(results)
     }
 }
 

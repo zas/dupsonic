@@ -90,6 +90,24 @@ enum Commands {
         threshold: f64,
     },
 
+    /// Exclude files from duplicate results
+    Exclude {
+        /// Files to exclude
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+    },
+
+    /// Re-include previously excluded files
+    Include {
+        /// Files to re-include (or --all to clear all exclusions)
+        #[arg(required_unless_present = "all")]
+        paths: Vec<PathBuf>,
+
+        /// Clear all exclusions
+        #[arg(long)]
+        all: bool,
+    },
+
     /// Drop-in replacement for fpcalc (compatible with Picard)
     #[command(name = "fpcalc")]
     Fpcalc {
@@ -195,6 +213,34 @@ fn main() -> Result<()> {
             length,
         } => {
             dupsonic::fpcalc::run(&db, &file, length)?;
+        }
+        Commands::Exclude { paths } => {
+            for path in &paths {
+                let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+                if db.exclude_file(&canonical)? {
+                    println!("Excluded: {}", canonical.display());
+                } else {
+                    println!("Not found in database: {}", path.display());
+                }
+            }
+        }
+        Commands::Include { paths, all } => {
+            if all {
+                let excluded = db.list_excluded()?;
+                for path in &excluded {
+                    db.include_file(path)?;
+                }
+                println!("Re-included {} files", excluded.len());
+            } else {
+                for path in &paths {
+                    let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+                    if db.include_file(&canonical)? {
+                        println!("Re-included: {}", canonical.display());
+                    } else {
+                        println!("Not found in database: {}", path.display());
+                    }
+                }
+            }
         }
     }
 
