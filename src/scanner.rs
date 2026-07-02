@@ -1,4 +1,5 @@
 use anyhow::Result;
+use globset::{Glob, GlobSet, GlobSetBuilder};
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
@@ -16,10 +17,39 @@ const AUDIO_EXTENSIONS: &[&str] = &[
 ];
 
 /// Scan directories for audio files and fingerprint them.
-pub fn scan(db: &Database, paths: &[PathBuf], jobs: usize, length: u64, force: bool) -> Result<()> {
+pub fn scan(
+    db: &Database,
+    paths: &[PathBuf],
+    jobs: usize,
+    length: u64,
+    ignore_patterns: &[String],
+    force: bool,
+    quiet: bool,
+) -> Result<()> {
     info!("Discovering audio files...");
-    let files = discover_audio_files(paths);
+
+    // Warn about paths that don't exist
+    for path in paths {
+        if !path.exists() {
+            eprintln!("Warning: path does not exist: {}", path.display());
+        }
+    }
+
+    // Build ignore glob set
+    let ignore_set = build_ignore_set(ignore_patterns)?;
+
+    let files = discover_audio_files(paths, &ignore_set);
     info!("Found {} audio files", files.len());
+
+    // Warn if no audio files found
+    if files.is_empty() {
+        eprintln!(
+            "Warning: no audio files found in the specified path(s).\n\
+             Supported formats: {}",
+            AUDIO_EXTENSIONS.join(", ")
+        );
+        return Ok(());
+    }
 
     // Filter out already-fingerprinted files (unless --force)
     let to_process: Vec<PathBuf> = if force {
@@ -32,17 +62,25 @@ pub fn scan(db: &Database, paths: &[PathBuf], jobs: usize, length: u64, force: b
     };
 
     if to_process.is_empty() {
-        println!("All files already fingerprinted. Use --force to rescan.");
+        if !quiet {
+            println!("All files already fingerprinted. Use --force to rescan.");
+        }
         return Ok(());
     }
 
-    println!(
-        "Fingerprinting {} files using {} workers...",
-        to_process.len(),
-        jobs
-    );
+    if !quiet {
+        println!(
+            "Fingerprinting {} files using {} workers...",
+            to_process.len(),
+            jobs
+        );
+    }
 
-    let pb = ProgressBar::new(to_process.len() as u64);
+    let pb = if quiet {
+        ProgressBar::hidden()
+    } else {
+        ProgressBar::new(to_process.len() as u64)
+    };
     pb.set_style(
         ProgressStyle::default_bar()
             .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
@@ -88,13 +126,15 @@ pub fn scan(db: &Database, paths: &[PathBuf], jobs: usize, length: u64, force: b
 
     let successes = success_count.load(Ordering::Relaxed);
     let errors = error_count.load(Ordering::Relaxed);
-    println!("Finished: {} fingerprinted, {} errors", successes, errors);
+    if !quiet {
+        println!("Finished: {} fingerprinted, {} errors", successes, errors);
+    }
 
     Ok(())
 }
 
 /// Walk directories and collect paths to audio files.
-fn discover_audio_files(paths: &[PathBuf]) -> Vec<PathBuf> {
+fn discover_audio_files(paths: &[PathBuf], ignore_set: &GlobSet) -> Vec<PathBuf> {
     let mut files = Vec::new();
 
     for base_path in paths {
@@ -106,15 +146,34 @@ fn discover_audio_files(paths: &[PathBuf]) -> Vec<PathBuf> {
             if !entry.file_type().is_file() {
                 continue;
             }
-            if is_audio_file(entry.path()) {
-                files.push(entry.into_path());
+            let path = entry.path();
+            if !is_audio_file(path) {
+                continue;
             }
+            // Check against ignore patterns
+            if ignore_set.is_match(path) {
+                continue;
+            }
+            files.push(entry.into_path());
         }
     }
 
     files.sort();
     files.dedup();
     files
+}
+
+/// Build a GlobSet from gitignore-style patterns.
+fn build_ignore_set(patterns: &[String]) -> Result<GlobSet> {
+    let mut builder = GlobSetBuilder::new();
+    for pattern in patterns {
+        // Support both "*.m4p" and "**/Podcasts/**" style patterns
+        let glob = Glob::new(pattern)
+            .or_else(|_| Glob::new(&format!("**/{}", pattern)))
+            .map_err(|e| anyhow::anyhow!("Invalid ignore pattern '{}': {}", pattern, e))?;
+        builder.add(glob);
+    }
+    Ok(builder.build()?)
 }
 
 fn is_audio_file(path: &Path) -> bool {

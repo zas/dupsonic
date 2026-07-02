@@ -21,6 +21,10 @@ struct Cli {
     #[arg(short, long, action = clap::ArgAction::Count)]
     verbose: u8,
 
+    /// Suppress progress output
+    #[arg(short, long)]
+    quiet: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -40,6 +44,10 @@ enum Commands {
         /// Max audio duration in seconds to fingerprint (default 120)
         #[arg(short, long, default_value_t = 120)]
         length: u64,
+
+        /// Ignore paths matching gitignore-style patterns (repeatable)
+        #[arg(short, long)]
+        ignore: Vec<String>,
 
         /// Force re-fingerprinting of already-scanned files
         #[arg(long)]
@@ -185,9 +193,10 @@ fn main() -> Result<()> {
             paths,
             jobs,
             length,
+            ignore,
             force,
         } => {
-            scanner::scan(&db, &paths, jobs, length, force)?;
+            scanner::scan(&db, &paths, jobs, length, &ignore, force, cli.quiet)?;
         }
         Commands::FindDupes {
             threshold,

@@ -42,6 +42,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # File walking
 walkdir = "2.5"
 
+# Gitignore-style pattern matching
+globset = "0.4"
+
 # Regex for --keep strategy
 regex = "1.10"
 
