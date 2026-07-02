@@ -102,6 +102,9 @@ pub fn scan(
                         warn!("Failed to store fingerprint for {}: {}", path.display(), e);
                         error_count.fetch_add(1, Ordering::Relaxed);
                     } else {
+                        // Pre-compute and store band hashes for DB-based candidate generation
+                        let hashes = crate::matcher::compute_band_hashes(&fp_result.fingerprint);
+                        let _ = db.store_band_hashes(path, &hashes);
                         success_count.fetch_add(1, Ordering::Relaxed);
                         debug!("Fingerprinted: {}", path.display());
                     }

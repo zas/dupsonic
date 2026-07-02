@@ -2,6 +2,7 @@ use anyhow::Result;
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Mutex;
 use tracing::info;
 
@@ -50,7 +51,132 @@ const LSH_NUM_BANDS: usize = 50;
 /// Uses Locality-Sensitive Hashing (LSH) to find candidate pairs in O(n),
 /// then verifies candidates with full fingerprint comparison.
 /// This scales to 100k+ file collections.
+///
+/// When band hashes are pre-computed in the DB (from scan), uses SQL-based
+/// candidate generation which requires minimal RAM. Falls back to in-memory
+/// LSH for backward compatibility.
 pub fn find_duplicates(
+    db: &Database,
+    threshold: f64,
+    same_tree: bool,
+) -> Result<Vec<DuplicateGroup>> {
+    // Try DB-based candidate generation first (low memory)
+    if db.has_band_hashes()? {
+        return find_duplicates_from_db(db, threshold, same_tree);
+    }
+
+    // Fallback: in-memory LSH (backward compat with old DBs without band_hashes)
+    find_duplicates_in_memory(db, threshold, same_tree)
+}
+
+/// DB-based candidate generation: uses pre-computed band hashes in SQLite.
+/// Only loads fingerprints for candidate pairs, not the entire collection.
+fn find_duplicates_from_db(
+    db: &Database,
+    threshold: f64,
+    same_tree: bool,
+) -> Result<Vec<DuplicateGroup>> {
+    println!("Phase 1: Finding candidate pairs (DB)...");
+    let mut candidates = db.find_candidates_from_bands()?;
+
+    // Apply duration + same_tree filters
+    candidates.retain(|(p1, p2)| {
+        if same_tree && !shares_root(p1, p2) {
+            return false;
+        }
+        true
+    });
+
+    println!("  Found {} candidate pairs", candidates.len());
+
+    if candidates.is_empty() {
+        println!("No duplicates found.");
+        return Ok(Vec::new());
+    }
+
+    // Phase 2: Load only candidate fingerprints and verify
+    println!("Phase 2: Verifying {} candidates...", candidates.len());
+
+    let mut uf_map: HashMap<PathBuf, usize> = HashMap::new();
+    let mut uf_idx = 0;
+    let mut uf = UnionFind::new(candidates.len() * 2); // upper bound
+
+    for (p1, p2) in &candidates {
+        let idx1 = *uf_map.entry(p1.clone()).or_insert_with(|| {
+            let i = uf_idx;
+            uf_idx += 1;
+            i
+        });
+        let idx2 = *uf_map.entry(p2.clone()).or_insert_with(|| {
+            let i = uf_idx;
+            uf_idx += 1;
+            i
+        });
+
+        // Load fingerprints on demand
+        let fp1 = match db.load_fingerprint(p1)? {
+            Some(f) => f,
+            None => continue,
+        };
+        let fp2 = match db.load_fingerprint(p2)? {
+            Some(f) => f,
+            None => continue,
+        };
+
+        // Duration filter
+        if !durations_compatible(fp1.duration_secs, fp2.duration_secs) {
+            continue;
+        }
+
+        let score = compare_fingerprints(&fp1.fingerprint, &fp2.fingerprint);
+        if score >= threshold {
+            uf.union(idx1, idx2);
+        }
+    }
+
+    // Build groups from union-find
+    let mut groups_map: HashMap<usize, Vec<PathBuf>> = HashMap::new();
+    for (path, &idx) in &uf_map {
+        let root = uf.find(idx);
+        groups_map.entry(root).or_default().push(path.clone());
+    }
+
+    let mut groups: Vec<DuplicateGroup> = groups_map
+        .into_values()
+        .filter(|members| members.len() > 1)
+        .map(|members| {
+            let ref_fp = db.load_fingerprint(&members[0]).ok().flatten();
+            let mut files: Vec<DuplicateFile> = members
+                .iter()
+                .map(|path| {
+                    let fp = db.load_fingerprint(path).ok().flatten();
+                    let score = match (&ref_fp, &fp) {
+                        (Some(r), Some(f)) if path != &members[0] => {
+                            compare_fingerprints(&r.fingerprint, &f.fingerprint)
+                        }
+                        _ => 1.0,
+                    };
+                    let duration = fp.map(|f| f.duration_secs).unwrap_or(0.0);
+                    DuplicateFile {
+                        path: path.clone(),
+                        duration_secs: duration,
+                        score,
+                    }
+                })
+                .collect();
+            files.sort_by(|a, b| a.path.cmp(&b.path));
+            DuplicateGroup { files }
+        })
+        .collect();
+
+    groups.sort_by_key(|g| std::cmp::Reverse(g.files.len()));
+
+    println!("Found {} duplicate groups", groups.len());
+    Ok(groups)
+}
+
+/// In-memory LSH candidate generation (original approach, for backward compatibility).
+fn find_duplicates_in_memory(
     db: &Database,
     threshold: f64,
     same_tree: bool,
@@ -318,6 +444,21 @@ fn generate_candidates_lsh(
     }
 
     candidate_set.into_iter().collect()
+}
+
+/// Compute band hashes for a fingerprint (for DB pre-computation during scan).
+pub fn compute_band_hashes(fingerprint: &[u32]) -> Vec<u64> {
+    let mut hashes = Vec::with_capacity(LSH_NUM_BANDS);
+    for band_idx in 0..LSH_NUM_BANDS {
+        let band_start = band_idx * LSH_ROWS_PER_BAND;
+        if fingerprint.len() < band_start + LSH_ROWS_PER_BAND {
+            break;
+        }
+        hashes.push(hash_band(
+            &fingerprint[band_start..band_start + LSH_ROWS_PER_BAND],
+        ));
+    }
+    hashes
 }
 
 /// Hash a band (slice of sub-fingerprints) into a single u64 bucket key.

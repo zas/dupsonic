@@ -49,6 +49,16 @@ impl Database {
             );
 
             CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
+
+            CREATE TABLE IF NOT EXISTS band_hashes (
+                file_id INTEGER NOT NULL,
+                band_idx INTEGER NOT NULL,
+                hash INTEGER NOT NULL,
+                PRIMARY KEY (file_id, band_idx)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_band_hashes_lookup
+                ON band_hashes(hash, band_idx);
             ",
         )?;
 
@@ -312,6 +322,95 @@ impl Database {
                 "SELECT acoustid FROM files WHERE path = ?1",
                 params![path.to_string_lossy().as_ref()],
                 |row| row.get(0),
+            )
+            .ok();
+        Ok(result)
+    }
+
+    /// Store pre-computed band hashes for a file.
+    pub fn store_band_hashes(&self, path: &Path, band_hashes: &[u64]) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let file_id: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM files WHERE path = ?1",
+                params![path.to_string_lossy().as_ref()],
+                |row| row.get(0),
+            )
+            .ok();
+
+        let file_id = match file_id {
+            Some(id) => id,
+            None => return Ok(()), // File not in DB yet
+        };
+
+        // Delete old hashes
+        conn.execute(
+            "DELETE FROM band_hashes WHERE file_id = ?1",
+            params![file_id],
+        )?;
+
+        // Insert new hashes
+        let mut stmt =
+            conn.prepare("INSERT INTO band_hashes (file_id, band_idx, hash) VALUES (?1, ?2, ?3)")?;
+        for (idx, &hash) in band_hashes.iter().enumerate() {
+            stmt.execute(params![file_id, idx as i64, hash as i64])?;
+        }
+
+        Ok(())
+    }
+
+    /// Find candidate duplicate pairs using pre-computed band hashes in the DB.
+    /// Returns pairs of (path1, path2) that share at least one band hash.
+    pub fn find_candidates_from_bands(&self) -> Result<Vec<(PathBuf, PathBuf)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT f1.path, f2.path
+             FROM band_hashes b1
+             JOIN band_hashes b2 ON b1.hash = b2.hash AND b1.band_idx = b2.band_idx
+             JOIN files f1 ON b1.file_id = f1.id
+             JOIN files f2 ON b2.file_id = f2.id
+             WHERE b1.file_id < b2.file_id
+               AND COALESCE(f1.excluded, 0) = 0
+               AND COALESCE(f2.excluded, 0) = 0",
+        )?;
+
+        let results = stmt
+            .query_map([], |row| {
+                let p1: String = row.get(0)?;
+                let p2: String = row.get(1)?;
+                Ok((PathBuf::from(p1), PathBuf::from(p2)))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(results)
+    }
+
+    /// Check if band hashes are populated for the collection.
+    pub fn has_band_hashes(&self) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM band_hashes", [], |row| row.get(0))?;
+        Ok(count > 0)
+    }
+
+    /// Load fingerprint for a specific file path.
+    pub fn load_fingerprint(&self, path: &Path) -> Result<Option<FileFingerprint>> {
+        let conn = self.conn.lock().unwrap();
+        let result = conn
+            .query_row(
+                "SELECT path, duration_secs, fingerprint FROM files WHERE path = ?1 AND fingerprint IS NOT NULL",
+                params![path.to_string_lossy().as_ref()],
+                |row| {
+                    let path: String = row.get(0)?;
+                    let duration_secs: f64 = row.get(1)?;
+                    let fp_blob: Vec<u8> = row.get(2)?;
+                    Ok(FileFingerprint {
+                        path: PathBuf::from(path),
+                        duration_secs,
+                        fingerprint: bytes_to_fingerprint(&fp_blob),
+                    })
+                },
             )
             .ok();
         Ok(result)
