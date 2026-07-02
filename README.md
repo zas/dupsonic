@@ -6,7 +6,12 @@ dupsonic uses acoustic fingerprinting to detect duplicates regardless of format,
 
 ## Install
 
-Grab a pre-built binary from [GitHub Releases](https://github.com/zas/dupsonic/releases):
+**From crates.io** (requires Rust toolchain):
+```bash
+cargo install dupsonic
+```
+
+**Pre-built binaries** from [GitHub Releases](https://github.com/zas/dupsonic/releases):
 
 ```bash
 # Linux
