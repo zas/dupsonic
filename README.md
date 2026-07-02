@@ -130,14 +130,15 @@ After running `identify`, `find-dupes` automatically filters out groups where MB
 - **MBIDs can be wrong** — files may be mis-tagged, and AcoustID can return low-confidence matches. Use `--no-mbid-filter` on `find-dupes` if you suspect MBID filtering is hiding valid duplicates.
 - **Not all music is in AcoustID** — obscure/independent releases may not be in the database.
 
-**Setup (only needed for AcoustID queries on untagged files):**
+**Do I need an AcoustID API key?**
+
+- **If your files are tagged by Picard: NO.** MBIDs are read directly from the file tags — no network requests, no API key, instant.
+- **If you have untagged files:** an API key is needed to query AcoustID online. Register for free at https://acoustid.org/new-application, then:
 
 ```bash
 export ACOUSTID_API_KEY=your_key_here
 dupsonic identify
 ```
-
-Register for a free key at https://acoustid.org/new-application.
 
 ### `exclude` / `include` — Manage false positives
 
