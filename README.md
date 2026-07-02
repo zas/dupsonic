@@ -137,16 +137,16 @@ Designed for large collections (100k+ files):
 
 | | dupsonic (15s) | dupsonic (120s) | soundalike (15s) |
 |---|---|---|---|
-| **Scan** | **23s** | 1m 33s | 2m 38s |
+| **Scan** | **~6s** | 36s | 2m 38s |
 | **Find dupes** | 0.04s | 0.04s | (included in scan) |
-| **Total** | **23s** | **1m 33s** | **2m 38s** |
+| **Total** | **~6s** | **36s** | **2m 38s** |
 | **Duplicates found** | 33 groups | 33 groups | 32 groups |
 
-- At the same fingerprint length (15s), dupsonic is **7× faster** than soundalike
-- At 120s (default), dupsonic is still faster while fingerprinting 8× more audio
+- At the same fingerprint length (15s), dupsonic is **~25× faster** than soundalike
+- At 120s (default, 8× more audio), dupsonic is still **4× faster** than soundalike at 15s
 - Finding duplicates is decoupled from scanning — rerun `find-dupes` with different thresholds instantly
 
-The speedup comes from in-process audio decoding (no external `fpcalc` process per file) and parallel workers across all CPU cores.
+The speedup comes from in-process audio decoding (no external `fpcalc` process per file), parallel workers across all CPU cores, and chromaprint-next's optimized fingerprint algorithm.
 
 ## Supported formats
 
@@ -182,6 +182,11 @@ cd dupsonic
 cargo build --release
 # Binary at target/release/dupsonic
 ```
+
+No external dependencies — everything is compiled into a single static binary:
+- **[chromaprint-next](https://lib.rs/crates/chromaprint-next)** — acoustic fingerprinting (pure Rust, bit-identical to C Chromaprint, faster than the C reference)
+- **[Symphonia](https://github.com/pdeljanov/Symphonia)** — audio decoding for all major formats (pure Rust, no FFmpeg)
+- **SQLite** — fingerprint cache (bundled, compiled from source)
 
 ## Similar projects
 
