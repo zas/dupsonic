@@ -86,15 +86,35 @@ impl AcoustIdClient {
             fingerprint.len()
         );
 
-        let response: AcoustIdResponse = ureq::get(ACOUSTID_API_URL)
-            .query_pairs([
-                ("client", self.api_key.as_str()),
-                ("meta", "recordings"),
-                ("duration", &duration.to_string()),
-                ("fingerprint", &encoded_fp),
-            ])
-            .call()
-            .context("AcoustID API request failed")?
+        let duration_str = duration.to_string();
+        let params = [
+            ("client", self.api_key.as_str()),
+            ("meta", "recordings"),
+            ("duration", duration_str.as_str()),
+            ("fingerprint", encoded_fp.as_str()),
+        ];
+
+        let mut resp = match ureq::post(ACOUSTID_API_URL).send_form(params) {
+            Ok(r) => r,
+            Err(ureq::Error::StatusCode(503)) => {
+                // Service overloaded — back off and retry once
+                debug!("AcoustID returned 503, retrying after 2s...");
+                thread::sleep(Duration::from_secs(2));
+                match ureq::post(ACOUSTID_API_URL).send_form(params) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        anyhow::bail!("AcoustID HTTP error after retry: {e}");
+                    }
+                }
+            }
+            Err(e) => {
+                anyhow::bail!("AcoustID HTTP error: {e}");
+            }
+        };
+
+        self.last_request = Some(Instant::now());
+
+        let response: AcoustIdResponse = resp
             .body_mut()
             .read_json()
             .context("Failed to parse AcoustID response")?;
