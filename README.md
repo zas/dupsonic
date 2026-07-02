@@ -100,8 +100,10 @@ dupsonic fingerprints the actual audio (using [Chromaprint](https://acoustid.org
 ### `scan` — Fingerprint your library
 
 ```bash
-dupsonic scan ~/Music                    # scan a directory
+dupsonic scan ~/Music                    # scan a directory (recursive)
 dupsonic scan ~/Music /mnt/external      # scan multiple directories
+dupsonic scan track.flac other.mp3       # scan specific files
+dupsonic scan ~/Music/*.flac             # shell glob expansion
 dupsonic scan -j 8 ~/Music              # use 8 parallel workers
 dupsonic scan --length 15 ~/Music       # fast scan (15s, like soundalike)
 dupsonic scan --length 300 ~/Music      # for podcasts/audiobooks
