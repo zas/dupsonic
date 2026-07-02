@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use rusty_chromaprint::{Configuration, Fingerprinter};
+use chromaprint::{Algorithm, Fingerprinter};
 use std::path::Path;
 use symphonia::core::audio::{Audio, GenericAudioBufferRef};
 use symphonia::core::codecs::audio::{AudioCodecParameters, AudioDecoderOptions};
@@ -24,7 +24,7 @@ pub struct FingerprintResult {
 /// Generate an acoustic fingerprint for an audio file.
 ///
 /// Uses symphonia for decoding (supports mp3, ogg, flac, wav, aac, etc.)
-/// and rusty-chromaprint for fingerprint generation.
+/// and chromaprint-next for fingerprint generation (bit-identical to fpcalc).
 ///
 /// The fingerprint is generated from the first `max_duration_secs` of audio,
 /// but `duration_secs` reports the full file duration (critical for deduplication
@@ -73,10 +73,10 @@ pub fn fingerprint_file(path: &Path, max_duration_secs: u64) -> Result<Fingerpri
         .make_audio_decoder(&audio_params, &AudioDecoderOptions::default())
         .with_context(|| format!("Failed to create decoder: {}", path.display()))?;
 
-    let mut printer = Fingerprinter::new(&Configuration::preset_test2());
+    let mut printer = Fingerprinter::new(Algorithm::default());
     printer
-        .start(sample_rate, channels as u32)
-        .map_err(|_| anyhow::anyhow!("Failed to start fingerprinter"))?;
+        .start(sample_rate, channels as u16)
+        .map_err(|e| anyhow::anyhow!("Failed to start fingerprinter: {e}"))?;
 
     let max_samples = max_duration_secs * sample_rate as u64 * channels as u64;
     let mut total_samples: u64 = 0;
@@ -123,7 +123,7 @@ pub fn fingerprint_file(path: &Path, max_duration_secs: u64) -> Result<Fingerpri
                 Err(_) => continue, // Skip this packet
             };
 
-            printer.consume(&samples);
+            printer.feed(&samples).ok();
             total_samples += samples.len() as u64;
 
             if total_samples >= max_samples {
@@ -139,7 +139,7 @@ pub fn fingerprint_file(path: &Path, max_duration_secs: u64) -> Result<Fingerpri
         }
     }
 
-    printer.finish();
+    printer.finish().ok();
 
     let fingerprint = printer.fingerprint().to_vec();
     if fingerprint.is_empty() {

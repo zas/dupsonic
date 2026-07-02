@@ -146,7 +146,7 @@ fn test_fingerprint_wav_file() {
     let wav_path = dir.path().join("test.wav");
     generate_wav(440.0, 10.0, 44100, &wav_path);
 
-    let result = fingerprint_file(&wav_path).unwrap();
+    let result = fingerprint_file(&wav_path, 120).unwrap();
     assert!(!result.fingerprint.is_empty());
     assert!(result.duration_secs > 9.0 && result.duration_secs < 11.0);
 }
@@ -161,8 +161,8 @@ fn test_identical_files_produce_identical_fingerprints() {
     generate_wav(440.0, 15.0, 44100, &wav1);
     generate_wav(440.0, 15.0, 44100, &wav2);
 
-    let fp1 = fingerprint_file(&wav1).unwrap();
-    let fp2 = fingerprint_file(&wav2).unwrap();
+    let fp1 = fingerprint_file(&wav1, 120).unwrap();
+    let fp2 = fingerprint_file(&wav2, 120).unwrap();
 
     let score = compare_fingerprints(&fp1.fingerprint, &fp2.fingerprint);
     assert_eq!(
@@ -182,8 +182,8 @@ fn test_different_frequencies_produce_different_fingerprints() {
     // Generate pseudo-random noise-like pattern (many rapid frequency changes)
     generate_noise_wav(15.0, 44100, dir.path().join("noise.wav").as_path());
 
-    let fp1 = fingerprint_file(&wav1).unwrap();
-    let fp2 = fingerprint_file(&wav2).unwrap();
+    let fp1 = fingerprint_file(&wav1, 120).unwrap();
+    let fp2 = fingerprint_file(&wav2, 120).unwrap();
 
     let score = compare_fingerprints(&fp1.fingerprint, &fp2.fingerprint);
     // Chromaprint uses coarse spectral features - structured audio vs noise should differ
@@ -204,8 +204,8 @@ fn test_same_audio_different_sample_rate() {
     generate_wav(440.0, 15.0, 44100, &wav_44k);
     generate_wav(440.0, 15.0, 22050, &wav_22k);
 
-    let fp1 = fingerprint_file(&wav_44k).unwrap();
-    let fp2 = fingerprint_file(&wav_22k).unwrap();
+    let fp1 = fingerprint_file(&wav_44k, 120).unwrap();
+    let fp2 = fingerprint_file(&wav_22k, 120).unwrap();
 
     let score = compare_fingerprints(&fp1.fingerprint, &fp2.fingerprint);
     // Same audio at different sample rates should still be very similar after chromaprint's
@@ -226,8 +226,8 @@ fn test_duration_filter_catches_different_length_tracks() {
     generate_wav(440.0, 30.0, 44100, &short);
     generate_wav(440.0, 300.0, 44100, &long);
 
-    let fp_short = fingerprint_file(&short).unwrap();
-    let fp_long = fingerprint_file(&long).unwrap();
+    let fp_short = fingerprint_file(&short, 120).unwrap();
+    let fp_long = fingerprint_file(&long, 120).unwrap();
 
     // Fingerprints of the overlapping portion would be similar, but durations differ
     assert!(!durations_compatible(
@@ -255,7 +255,7 @@ fn test_full_pipeline_finds_duplicates() {
 
     // Fingerprint all files
     for path in [&dup1, &dup2, &dup3, &diff] {
-        let result = fingerprint_file(path).unwrap();
+        let result = fingerprint_file(path, 120).unwrap();
         db.store_fingerprint(path, &result, 120).unwrap();
     }
 
@@ -298,7 +298,7 @@ fn test_pipeline_respects_duration_filter() {
     generate_wav(440.0, 60.0, 44100, &long);
 
     for path in [&short, &long] {
-        let result = fingerprint_file(path).unwrap();
+        let result = fingerprint_file(path, 120).unwrap();
         db.store_fingerprint(path, &result, 120).unwrap();
     }
 
@@ -328,7 +328,7 @@ fn test_pipeline_single_file() {
 
     let wav = dir.path().join("only.wav");
     generate_wav(440.0, 15.0, 44100, &wav);
-    let result = fingerprint_file(&wav).unwrap();
+    let result = fingerprint_file(&wav, 120).unwrap();
     db.store_fingerprint(&wav, &result, 120).unwrap();
 
     let groups = find_duplicates(&db, 0.8, false).unwrap();
@@ -344,7 +344,7 @@ fn test_incremental_scan_detection() {
     let wav = dir.path().join("track.wav");
     generate_wav(440.0, 10.0, 44100, &wav);
 
-    let result = fingerprint_file(&wav).unwrap();
+    let result = fingerprint_file(&wav, 120).unwrap();
     db.store_fingerprint(&wav, &result, 120).unwrap();
 
     // File hasn't changed — should be detected as current
