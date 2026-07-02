@@ -107,18 +107,34 @@ When multiple files match the keep strategy, the best quality among them is kept
 
 **Safety:** `--apply` is required to execute. Without it, dupsonic only shows what would happen. Paths are properly shell-quoted to handle spaces, parentheses, and special characters safely.
 
-### `identify` — Confirm duplicates via MusicBrainz
+### `identify` — Eliminate false positives via MusicBrainz
 
 ```bash
 dupsonic identify                        # resolve files in duplicate groups (default)
 dupsonic identify --all                  # resolve all unresolved files
 ```
 
-Reads MusicBrainz Recording IDs from your file tags (instant, free). For untagged files, queries the [AcoustID](https://acoustid.org) service (rate-limited). Requires an API key:
+The `identify` step is **optional** — `find-dupes` works fine without it. But it helps in one specific case: when two *different* recordings are acoustically similar enough to trigger a match. Examples:
+
+- A track and its remix/rough mix (similar arrangement, same artist)
+- Two tracks by the same band with identical duration and similar instrumentation
+
+After running `identify`, `find-dupes` automatically filters out groups where MBIDs prove the files are different recordings. Use `--no-mbid-filter` to see all acoustic matches regardless.
+
+**How it works:**
+1. Reads the recording MBID from file tags (`MUSICBRAINZ_TRACKID` in Vorbis/FLAC/MP4 — this is the standard tag written by all versions of Picard for the [recording](https://musicbrainz.org/doc/Recording) identifier)
+2. For files without tags, queries [AcoustID](https://acoustid.org) (rate-limited to 3 req/s)
+
+**Caveats:**
+- **AcoustID queries are slow** — at 3 req/s, 1000 untagged files takes ~5 minutes. For collections tagged by Picard, tag reading is instant and no API key is needed.
+- **MBIDs can be wrong** — files may be mis-tagged, and AcoustID can return low-confidence matches. Use `--no-mbid-filter` on `find-dupes` if you suspect MBID filtering is hiding valid duplicates.
+- **Not all music is in AcoustID** — obscure/independent releases may not be in the database.
+
+**Setup (only needed for AcoustID queries on untagged files):**
 
 ```bash
 export ACOUSTID_API_KEY=your_key_here
-dupsonic identify --dupes-only
+dupsonic identify
 ```
 
 Register for a free key at https://acoustid.org/new-application.

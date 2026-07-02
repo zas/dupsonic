@@ -37,14 +37,16 @@ pub fn read_recording_mbid(path: &Path) -> Result<Option<String>> {
     if let Some(revision) = metadata.current() {
         for tag in &revision.media.tags {
             if let Some(std_tag) = tag.std.as_ref() {
-                // Picard writes the recording MBID as MUSICBRAINZ_TRACKID (historical)
-                // Some tools use the newer MUSICBRAINZ_RECORDINGID tag name
-                let mbid = match std_tag {
-                    StandardTag::MusicBrainzRecordingId(id) => Some(id),
+                // In file tags (Vorbis/ID3/MP4), MUSICBRAINZ_TRACKID has always been
+                // the Recording MBID. This is true for all versions of Picard.
+                // (The confusing rename is internal to Picard only, not in file tags.)
+                // MUSICBRAINZ_RECORDINGID may also appear from other taggers.
+                let id = match std_tag {
                     StandardTag::MusicBrainzTrackId(id) => Some(id),
+                    StandardTag::MusicBrainzRecordingId(id) => Some(id),
                     _ => None,
                 };
-                if let Some(id) = mbid {
+                if let Some(id) = id {
                     let id = id.trim();
                     if !id.is_empty() {
                         return Ok(Some(id.to_string()));
