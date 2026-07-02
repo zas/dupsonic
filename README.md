@@ -267,6 +267,22 @@ Single static binary, no external dependencies:
 
 Override with `--db <path>`.
 
+## Shell completions
+
+```bash
+# Bash
+dupsonic completions bash > ~/.local/share/bash-completion/completions/dupsonic
+
+# Zsh
+dupsonic completions zsh > ~/.zfunc/_dupsonic
+
+# Fish
+dupsonic completions fish > ~/.config/fish/completions/dupsonic.fish
+
+# PowerShell
+dupsonic completions powershell > dupsonic.ps1
+```
+
 ## License
 
 GPL-2.0-or-later

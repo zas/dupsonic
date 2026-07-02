@@ -1,5 +1,5 @@
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use directories::ProjectDirs;
 use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
@@ -146,6 +146,13 @@ enum Commands {
         #[arg(short, long, default_value_t = 120)]
         length: u64,
     },
+
+    /// Generate shell completions
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
 }
 
 fn num_cpus() -> usize {
@@ -283,6 +290,11 @@ fn main() -> Result<()> {
                     }
                 }
             }
+        }
+        Commands::Completions { shell } => {
+            let mut cmd = Cli::command();
+            clap_complete::generate(shell, &mut cmd, "dupsonic", &mut std::io::stdout());
+            return Ok(());
         }
     }
 
