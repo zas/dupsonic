@@ -36,10 +36,19 @@ pub fn read_recording_mbid(path: &Path) -> Result<Option<String>> {
     let metadata = format.metadata();
     if let Some(revision) = metadata.current() {
         for tag in &revision.media.tags {
-            if let Some(StandardTag::MusicBrainzRecordingId(id)) = tag.std.as_ref() {
-                let id = id.trim();
-                if !id.is_empty() {
-                    return Ok(Some(id.to_string()));
+            if let Some(std_tag) = tag.std.as_ref() {
+                // Picard writes the recording MBID as MUSICBRAINZ_TRACKID (historical)
+                // Some tools use the newer MUSICBRAINZ_RECORDINGID tag name
+                let mbid = match std_tag {
+                    StandardTag::MusicBrainzRecordingId(id) => Some(id),
+                    StandardTag::MusicBrainzTrackId(id) => Some(id),
+                    _ => None,
+                };
+                if let Some(id) = mbid {
+                    let id = id.trim();
+                    if !id.is_empty() {
+                        return Ok(Some(id.to_string()));
+                    }
                 }
             }
         }
