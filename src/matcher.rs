@@ -1,0 +1,423 @@
+use anyhow::Result;
+use indicatif::{ProgressBar, ProgressStyle};
+use rayon::prelude::*;
+use std::collections::{HashMap, HashSet};
+use std::sync::Mutex;
+use tracing::info;
+
+use crate::database::Database;
+use crate::fingerprint::{compare_fingerprints, durations_compatible};
+
+/// A group of files that are acoustic duplicates of each other.
+#[derive(Debug, Clone)]
+pub struct DuplicateGroup {
+    /// Files in this group, sorted by path
+    pub files: Vec<DuplicateFile>,
+}
+
+/// A single file within a duplicate group.
+#[derive(Debug, Clone)]
+pub struct DuplicateFile {
+    pub path: std::path::PathBuf,
+    pub duration_secs: f64,
+    /// Similarity score to the group's reference file (first file)
+    pub score: f64,
+}
+
+// --- LSH Configuration ---
+// We use banding on the raw u32 sub-fingerprints.
+// Each band is a contiguous block of sub-fingerprints that we hash together.
+// Two fingerprints that share at least one band hash are candidate pairs.
+//
+// With B bands of R rows each:
+// - P(candidate | similarity s) ≈ 1 - (1 - s^R)^B
+// - For s=0.8 (80% similarity), R=4, B=25: P ≈ 0.9997 (almost all true matches found)
+// - For s=0.5 (50% similarity), R=4, B=25: P ≈ 0.098 (few false candidates)
+//
+// This gives us O(n) candidate generation instead of O(n²).
+
+/// Number of rows per band (sub-fingerprints hashed together per band)
+const LSH_ROWS_PER_BAND: usize = 4;
+
+/// Number of bands
+const LSH_NUM_BANDS: usize = 25;
+
+/// Find groups of duplicate files based on fingerprint similarity.
+///
+/// Uses Locality-Sensitive Hashing (LSH) to find candidate pairs in O(n),
+/// then verifies candidates with full fingerprint comparison.
+/// This scales to 100k+ file collections.
+pub fn find_duplicates(
+    db: &Database,
+    threshold: f64,
+    same_tree: bool,
+) -> Result<Vec<DuplicateGroup>> {
+    let all_fps = db.load_all_fingerprints()?;
+    let n = all_fps.len();
+    info!("Loaded {} fingerprints", n);
+
+    if n < 2 {
+        println!("Not enough fingerprinted files to compare.");
+        return Ok(Vec::new());
+    }
+
+    // Phase 1: Generate candidate pairs using LSH banding
+    println!("Phase 1: Finding candidate pairs (LSH)...");
+    let candidates = generate_candidates_lsh(&all_fps, same_tree);
+    println!(
+        "  Found {} candidate pairs (from {} possible, {:.2}% reduction)",
+        candidates.len(),
+        n * (n - 1) / 2,
+        (1.0 - candidates.len() as f64 / (n * (n - 1) / 2) as f64) * 100.0
+    );
+
+    if candidates.is_empty() {
+        println!("No duplicates found.");
+        return Ok(Vec::new());
+    }
+
+    // Phase 2: Verify candidates with full fingerprint comparison + duration check
+    println!("Phase 2: Verifying {} candidates...", candidates.len());
+    let pb = ProgressBar::new(candidates.len() as u64);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template(
+                "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})",
+            )
+            .expect("valid template")
+            .progress_chars("█▓░"),
+    );
+
+    let uf = Mutex::new(UnionFind::new(n));
+
+    candidates.par_iter().for_each(|&(i, j)| {
+        // Full fingerprint comparison (duration already filtered during candidate generation)
+        let score = compare_fingerprints(&all_fps[i].fingerprint, &all_fps[j].fingerprint);
+        if score >= threshold {
+            uf.lock().unwrap().union(i, j);
+        }
+        pb.inc(1);
+    });
+
+    pb.finish_and_clear();
+
+    // Phase 3: Collect groups from Union-Find
+    let mut uf = uf.into_inner().unwrap();
+    let mut groups_map: HashMap<usize, Vec<usize>> = HashMap::new();
+    for i in 0..n {
+        let root = uf.find(i);
+        groups_map.entry(root).or_default().push(i);
+    }
+
+    // Build result, only keep groups with 2+ files
+    let mut groups: Vec<DuplicateGroup> = groups_map
+        .into_values()
+        .filter(|members| members.len() > 1)
+        .map(|members| {
+            let reference_fp = &all_fps[members[0]].fingerprint;
+            let mut files: Vec<DuplicateFile> = members
+                .iter()
+                .map(|&idx| {
+                    let score = if idx == members[0] {
+                        1.0
+                    } else {
+                        compare_fingerprints(&all_fps[idx].fingerprint, reference_fp)
+                    };
+                    DuplicateFile {
+                        path: all_fps[idx].path.clone(),
+                        duration_secs: all_fps[idx].duration_secs,
+                        score,
+                    }
+                })
+                .collect();
+            files.sort_by(|a, b| a.path.cmp(&b.path));
+            DuplicateGroup { files }
+        })
+        .collect();
+
+    groups.sort_by(|a, b| b.files.len().cmp(&a.files.len()));
+
+    println!("Found {} duplicate groups", groups.len());
+    Ok(groups)
+}
+
+/// Generate candidate pairs using Locality-Sensitive Hashing (banding technique).
+///
+/// The fingerprint is divided into bands of consecutive sub-fingerprints.
+/// For each band, we hash the sub-fingerprints together. If two fingerprints
+/// share a band hash, they become a candidate pair.
+///
+/// This is O(n * num_bands) ≈ O(n) instead of O(n²).
+fn generate_candidates_lsh(
+    fps: &[crate::database::FileFingerprint],
+    same_tree: bool,
+) -> Vec<(usize, usize)> {
+    // For each band, build a hash table mapping band_hash -> list of fingerprint indices
+    let mut candidate_set: HashSet<(usize, usize)> = HashSet::new();
+
+    for band_idx in 0..LSH_NUM_BANDS {
+        let mut band_buckets: HashMap<u64, Vec<usize>> = HashMap::new();
+        let band_start = band_idx * LSH_ROWS_PER_BAND;
+
+        for (fp_idx, fp) in fps.iter().enumerate() {
+            if fp.fingerprint.len() < band_start + LSH_ROWS_PER_BAND {
+                continue; // Fingerprint too short for this band
+            }
+
+            let band_hash = hash_band(&fp.fingerprint[band_start..band_start + LSH_ROWS_PER_BAND]);
+            band_buckets.entry(band_hash).or_default().push(fp_idx);
+        }
+
+        // All fingerprints in the same bucket are candidate pairs
+        for bucket in band_buckets.values() {
+            if bucket.len() < 2 || bucket.len() > 1000 {
+                // Skip very large buckets (likely noise/silence) to prevent O(n²) blowup
+                continue;
+            }
+            for (idx_a, &i) in bucket.iter().enumerate() {
+                for &j in &bucket[idx_a + 1..] {
+                    let pair = if i < j { (i, j) } else { (j, i) };
+
+                    // Pre-filter: duration compatibility (cheap check before adding to set)
+                    if !durations_compatible(fps[i].duration_secs, fps[j].duration_secs) {
+                        continue;
+                    }
+
+                    // Pre-filter: same-tree constraint
+                    if same_tree && !shares_root(&fps[i].path, &fps[j].path) {
+                        continue;
+                    }
+
+                    candidate_set.insert(pair);
+                }
+            }
+        }
+    }
+
+    candidate_set.into_iter().collect()
+}
+
+/// Hash a band (slice of sub-fingerprints) into a single u64 bucket key.
+/// Uses FNV-1a for speed (we don't need cryptographic strength).
+fn hash_band(band: &[u32]) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325; // FNV offset basis
+    for &value in band {
+        for byte in value.to_le_bytes() {
+            hash ^= byte as u64;
+            hash = hash.wrapping_mul(0x100000001b3); // FNV prime
+        }
+    }
+    hash
+}
+
+/// Check if two paths share a common root directory.
+fn shares_root(a: &std::path::Path, b: &std::path::Path) -> bool {
+    // Find the first real directory component (skip root "/")
+    let a_components: Vec<_> = a.components().collect();
+    let b_components: Vec<_> = b.components().collect();
+
+    // Need at least 2 components (root + first dir)
+    if a_components.len() < 2 || b_components.len() < 2 {
+        return false;
+    }
+
+    // Compare up to the first 2 non-root components
+    a_components.iter().take(2).eq(b_components.iter().take(2))
+}
+
+/// Union-Find (Disjoint Set Union) data structure with path compression and union by rank.
+pub struct UnionFind {
+    parent: Vec<usize>,
+    rank: Vec<u8>,
+}
+
+impl UnionFind {
+    pub fn new(n: usize) -> Self {
+        Self {
+            parent: (0..n).collect(),
+            rank: vec![0; n],
+        }
+    }
+
+    /// Find with path compression (halving).
+    pub fn find(&mut self, mut x: usize) -> usize {
+        while self.parent[x] != x {
+            // Path halving: point to grandparent
+            self.parent[x] = self.parent[self.parent[x]];
+            x = self.parent[x];
+        }
+        x
+    }
+
+    pub fn union(&mut self, x: usize, y: usize) {
+        let rx = self.find(x);
+        let ry = self.find(y);
+        if rx == ry {
+            return;
+        }
+        match self.rank[rx].cmp(&self.rank[ry]) {
+            std::cmp::Ordering::Less => self.parent[rx] = ry,
+            std::cmp::Ordering::Greater => self.parent[ry] = rx,
+            std::cmp::Ordering::Equal => {
+                self.parent[ry] = rx;
+                self.rank[rx] += 1;
+            }
+        }
+    }
+
+    pub fn connected(&mut self, x: usize, y: usize) -> bool {
+        self.find(x) == self.find(y)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::FileFingerprint;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_union_find_basic() {
+        let mut uf = UnionFind::new(5);
+        assert!(!uf.connected(0, 1));
+        uf.union(0, 1);
+        assert!(uf.connected(0, 1));
+        assert!(!uf.connected(0, 2));
+    }
+
+    #[test]
+    fn test_union_find_transitive() {
+        let mut uf = UnionFind::new(5);
+        uf.union(0, 1);
+        uf.union(1, 2);
+        // 0, 1, 2 should all be connected transitively
+        assert!(uf.connected(0, 2));
+        assert!(!uf.connected(0, 3));
+    }
+
+    #[test]
+    fn test_union_find_all_connected() {
+        let mut uf = UnionFind::new(4);
+        uf.union(0, 1);
+        uf.union(2, 3);
+        uf.union(1, 2);
+        // All should be in same group
+        assert!(uf.connected(0, 3));
+    }
+
+    #[test]
+    fn test_lsh_identical_fingerprints_are_candidates() {
+        let fp = vec![0x12345678u32; 200];
+        let fps = vec![
+            FileFingerprint {
+                path: PathBuf::from("/music/a.flac"),
+                duration_secs: 180.0,
+                fingerprint: fp.clone(),
+            },
+            FileFingerprint {
+                path: PathBuf::from("/music/b.mp3"),
+                duration_secs: 180.5,
+                fingerprint: fp.clone(),
+            },
+        ];
+
+        let candidates = generate_candidates_lsh(&fps, false);
+        assert_eq!(candidates.len(), 1);
+        assert!(candidates.contains(&(0, 1)));
+    }
+
+    #[test]
+    fn test_lsh_very_different_fingerprints_not_candidates() {
+        let fp1 = vec![0x00000000u32; 200];
+        let fp2 = vec![0xFFFFFFFFu32; 200];
+        let fps = vec![
+            FileFingerprint {
+                path: PathBuf::from("/music/a.flac"),
+                duration_secs: 180.0,
+                fingerprint: fp1,
+            },
+            FileFingerprint {
+                path: PathBuf::from("/music/b.mp3"),
+                duration_secs: 180.0,
+                fingerprint: fp2,
+            },
+        ];
+
+        let candidates = generate_candidates_lsh(&fps, false);
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn test_lsh_duration_filter_rejects_different_lengths() {
+        let fp = vec![0x12345678u32; 200];
+        let fps = vec![
+            FileFingerprint {
+                path: PathBuf::from("/music/a.flac"),
+                duration_secs: 180.0, // 3 minutes
+                fingerprint: fp.clone(),
+            },
+            FileFingerprint {
+                path: PathBuf::from("/music/b.mp3"),
+                duration_secs: 420.0, // 7 minutes
+                fingerprint: fp.clone(),
+            },
+        ];
+
+        let candidates = generate_candidates_lsh(&fps, false);
+        // Should be rejected by duration filter even though fingerprints match
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn test_lsh_same_tree_filter() {
+        let fp = vec![0x12345678u32; 200];
+        let fps = vec![
+            FileFingerprint {
+                path: PathBuf::from("/home/user/Music/a.flac"),
+                duration_secs: 180.0,
+                fingerprint: fp.clone(),
+            },
+            FileFingerprint {
+                path: PathBuf::from("/mnt/external/b.mp3"),
+                duration_secs: 180.0,
+                fingerprint: fp.clone(),
+            },
+        ];
+
+        let with_filter = generate_candidates_lsh(&fps, true);
+        let without_filter = generate_candidates_lsh(&fps, false);
+        assert!(with_filter.is_empty());
+        assert_eq!(without_filter.len(), 1);
+    }
+
+    #[test]
+    fn test_hash_band_deterministic() {
+        let band = [0x12345678, 0xABCDEF01, 0x00FF00FF, 0xDEADBEEF];
+        let h1 = hash_band(&band);
+        let h2 = hash_band(&band);
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn test_hash_band_different_inputs() {
+        let band1 = [0x12345678, 0xABCDEF01, 0x00FF00FF, 0xDEADBEEF];
+        let band2 = [0x12345679, 0xABCDEF01, 0x00FF00FF, 0xDEADBEEF]; // one bit different
+        assert_ne!(hash_band(&band1), hash_band(&band2));
+    }
+
+    #[test]
+    fn test_shares_root_same_tree() {
+        assert!(shares_root(
+            &PathBuf::from("/home/user/Music/Artist/track.flac"),
+            &PathBuf::from("/home/user/Music/Other/track.mp3"),
+        ));
+    }
+
+    #[test]
+    fn test_shares_root_different_tree() {
+        assert!(!shares_root(
+            &PathBuf::from("/home/user/Music/track.flac"),
+            &PathBuf::from("/mnt/external/track.mp3"),
+        ));
+    }
+}
