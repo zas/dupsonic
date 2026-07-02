@@ -39,12 +39,29 @@ impl Database {
                 duration_secs REAL,
                 fingerprint BLOB,
                 error TEXT,
-                scanned_at TEXT NOT NULL DEFAULT (datetime('now'))
+                scanned_at TEXT NOT NULL DEFAULT (datetime('now')),
+                recording_mbid TEXT,
+                acoustid TEXT,
+                resolved_at TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
             ",
         )?;
+
+        // Migrate existing databases that lack the new columns
+        let has_recording_mbid: bool = conn
+            .prepare("SELECT recording_mbid FROM files LIMIT 0")
+            .is_ok();
+        if !has_recording_mbid {
+            conn.execute_batch(
+                "
+                ALTER TABLE files ADD COLUMN recording_mbid TEXT;
+                ALTER TABLE files ADD COLUMN acoustid TEXT;
+                ALTER TABLE files ADD COLUMN resolved_at TEXT;
+                ",
+            )?;
+        }
 
         Ok(Self {
             conn: Mutex::new(conn),
@@ -200,6 +217,60 @@ impl Database {
         }
 
         Ok(count)
+    }
+
+    /// Store a recording MBID (from file tags or AcoustID lookup) for a file.
+    pub fn store_recording_mbid(
+        &self,
+        path: &Path,
+        recording_mbid: &str,
+        acoustid: Option<&str>,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE files SET recording_mbid = ?1, acoustid = ?2, resolved_at = datetime('now')
+             WHERE path = ?3",
+            params![recording_mbid, acoustid, path.to_string_lossy().as_ref()],
+        )?;
+        Ok(())
+    }
+
+    /// Load files that have fingerprints but no recording MBID yet.
+    pub fn load_unresolved(&self) -> Result<Vec<FileFingerprint>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT path, duration_secs, fingerprint FROM files
+             WHERE fingerprint IS NOT NULL AND recording_mbid IS NULL",
+        )?;
+
+        let results = stmt
+            .query_map([], |row| {
+                let path: String = row.get(0)?;
+                let duration_secs: f64 = row.get(1)?;
+                let fp_blob: Vec<u8> = row.get(2)?;
+                Ok(FileFingerprint {
+                    path: PathBuf::from(path),
+                    duration_secs,
+                    fingerprint: bytes_to_fingerprint(&fp_blob),
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(results)
+    }
+
+    /// Get the recording MBID for a file, if resolved.
+    pub fn get_recording_mbid(&self, path: &Path) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let result = conn
+            .query_row(
+                "SELECT recording_mbid FROM files WHERE path = ?1",
+                params![path.to_string_lossy().as_ref()],
+                |row| row.get(0),
+            )
+            .ok();
+        Ok(result)
     }
 }
 

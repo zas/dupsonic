@@ -167,8 +167,7 @@ fn get_audio_codec_params(track: &Track) -> Option<AudioCodecParameters> {
 fn get_track_duration(track: &Track, sample_rate: u32) -> Option<f64> {
     if let (Some(tb), Some(duration)) = (track.time_base, track.duration) {
         // duration is in timebase units; convert to seconds: duration * (numer / denom)
-        let secs =
-            duration.get() as f64 * tb.numer.get() as f64 / tb.denom.get() as f64;
+        let secs = duration.get() as f64 * tb.numer.get() as f64 / tb.denom.get() as f64;
         Some(secs)
     } else {
         track.num_frames.map(|n| n as f64 / sample_rate as f64)

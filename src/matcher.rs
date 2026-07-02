@@ -154,7 +154,9 @@ pub fn find_duplicates_for(
     use crate::fingerprint::fingerprint_file;
 
     // Get or compute the target's fingerprint
-    let target = target.canonicalize().unwrap_or_else(|_| target.to_path_buf());
+    let target = target
+        .canonicalize()
+        .unwrap_or_else(|_| target.to_path_buf());
 
     let target_fp = if let Some(cached) = db
         .load_all_fingerprints()?
@@ -213,7 +215,11 @@ pub fn find_duplicates_for(
         },
     );
 
-    matches.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    matches.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     Ok(vec![DuplicateGroup { files: matches }])
 }

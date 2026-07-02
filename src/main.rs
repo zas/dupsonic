@@ -66,6 +66,21 @@ enum Commands {
 
     /// Remove entries for files that no longer exist
     CleanCache,
+
+    /// Identify recordings via MusicBrainz tags and AcoustID lookup
+    Identify {
+        /// AcoustID API key (or set ACOUSTID_API_KEY env var)
+        #[arg(long, env = "ACOUSTID_API_KEY")]
+        api_key: Option<String>,
+
+        /// Only identify files that are part of duplicate groups
+        #[arg(long)]
+        dupes_only: bool,
+
+        /// Minimum similarity threshold for duplicate detection (used with --dupes-only)
+        #[arg(short, long, default_value_t = 0.8)]
+        threshold: f64,
+    },
 }
 
 fn num_cpus() -> usize {
@@ -136,6 +151,13 @@ fn main() -> Result<()> {
         Commands::CleanCache => {
             let removed = db.clean_stale()?;
             println!("Removed {} stale entries", removed);
+        }
+        Commands::Identify {
+            api_key,
+            dupes_only,
+            threshold,
+        } => {
+            dupsonic::identify::run(&db, api_key.as_deref(), dupes_only, threshold)?;
         }
     }
 
