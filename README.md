@@ -133,6 +133,21 @@ Designed for large collections (100k+ files):
 - **LSH matching** — O(n) candidate generation instead of O(n²) pairwise comparison
 - **Duration pre-filter** — skips expensive fingerprint comparison when durations don't match
 
+### Benchmark (2025 files, FLAC/MP3 collection)
+
+| | dupsonic (15s) | dupsonic (120s) | soundalike (15s) |
+|---|---|---|---|
+| **Scan** | **23s** | 1m 33s | 2m 38s |
+| **Find dupes** | 0.04s | 0.04s | (included in scan) |
+| **Total** | **23s** | **1m 33s** | **2m 38s** |
+| **Duplicates found** | 33 groups | 33 groups | 32 groups |
+
+- At the same fingerprint length (15s), dupsonic is **7× faster** than soundalike
+- At 120s (default), dupsonic is still faster while fingerprinting 8× more audio
+- Finding duplicates is decoupled from scanning — rerun `find-dupes` with different thresholds instantly
+
+The speedup comes from in-process audio decoding (no external `fpcalc` process per file) and parallel workers across all CPU cores.
+
 ## Supported formats
 
 MP3, FLAC, OGG/Vorbis, Opus, WAV, M4A/AAC, WMA, AIFF, APE, WavPack, Musepack, WebM/MP4 audio.
