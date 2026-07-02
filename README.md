@@ -135,13 +135,27 @@ MP3, FLAC, OGG/Vorbis, Opus, WAV, M4A/AAC, WMA, AIFF, APE, WavPack, Musepack, We
 
 ## Installation
 
-Requires Rust 1.95+:
+### Download a pre-built binary
 
+Grab the latest release for your platform from [GitHub Releases](https://github.com/zas/dupsonic/releases).
+
+**Linux (x86_64):**
 ```bash
-cargo install --path .
+curl -LO https://github.com/zas/dupsonic/releases/latest/download/dupsonic-linux-x86_64.tar.gz
+tar xzf dupsonic-linux-x86_64.tar.gz
+sudo mv dupsonic /usr/local/bin/
 ```
 
-Or build from source:
+**macOS (Apple Silicon):**
+```bash
+curl -LO https://github.com/zas/dupsonic/releases/latest/download/dupsonic-macos-aarch64.tar.gz
+tar xzf dupsonic-macos-aarch64.tar.gz
+sudo mv dupsonic /usr/local/bin/
+```
+
+**Windows:** Download `dupsonic-windows-x86_64.zip` from the releases page and add to your PATH.
+
+### Build from source (requires Rust 1.95+)
 
 ```bash
 git clone https://github.com/zas/dupsonic
@@ -149,8 +163,6 @@ cd dupsonic
 cargo build --release
 # Binary at target/release/dupsonic
 ```
-
-No external dependencies required — audio decoding (symphonia), fingerprinting (chromaprint), and database (SQLite) are all compiled from pure Rust/bundled source.
 
 ## Works with Picard
 
