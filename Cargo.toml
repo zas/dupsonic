@@ -5,6 +5,9 @@ edition = "2021"
 description = "Find duplicate audio files using acoustic fingerprinting (chromaprint/AcoustID)"
 license = "GPL-2.0-or-later"
 repository = "https://github.com/zas/dupsonic"
+keywords = ["audio", "duplicate", "chromaprint", "musicbrainz", "picard"]
+categories = ["command-line-utilities", "multimedia::audio"]
+readme = "README.md"
 
 [dependencies]
 # CLI
