@@ -65,14 +65,16 @@ dupsonic find-dupes --details
 ### Remove duplicates
 
 ```bash
-# Preview what would be deleted (safe, default)
-dupsonic find-dupes --exec "rm {}" --keep best
+# Preview what would happen (safe, default)
+dupsonic find-dupes --exec "mv {} /tmp/dupes/" --keep best
 
 # Actually do it
-dupsonic find-dupes --exec "rm {}" --keep best --apply
+dupsonic find-dupes --exec "mv {} /tmp/dupes/" --keep best --apply
 ```
 
 `--keep best` preserves the highest quality file (lossless > lossy, higher sample rate/bit depth). Other strategies: `ext:flac`, `largest`, `newest`, `regex:<pattern>`. See [full reference](#find-dupes---exec--act-on-duplicates) below.
+
+> **Tip:** Prefer `mv` or `trash-put` over `rm` — you can always delete moved files later once you've verified the results.
 
 ### Reduce false positives (optional)
 
@@ -141,12 +143,14 @@ dupsonic find-dupes --format json        # JSON output (for scripting)
 
 ```bash
 # Preview (default is dry-run)
-dupsonic find-dupes --exec "trash-put {}" --keep best
+dupsonic find-dupes --exec "mv {} /tmp/dupes/" --keep best
 
 # Execute
-dupsonic find-dupes --exec "rm {}" --keep best --apply
-dupsonic find-dupes --exec "mv {} /tmp/dupes/" --keep ext:flac --apply
+dupsonic find-dupes --exec "mv {} /tmp/dupes/" --keep best --apply
+dupsonic find-dupes --exec "trash-put {}" --keep ext:flac --apply
 ```
+
+> **⚠️ Avoid destructive commands like `rm`.** Use `mv` to move duplicates to a staging folder, review them, then delete manually. Or use `trash-put` (Linux) / `trash` (macOS) to send to the system trash.
 
 **`--keep` strategies:**
 
