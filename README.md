@@ -278,6 +278,10 @@ dupsonic completions bash > ~/.local/share/bash-completion/completions/dupsonic
 mkdir -p ~/.zfunc
 dupsonic completions zsh > ~/.zfunc/_dupsonic
 
+# Zsh with oh-my-zsh
+mkdir -p ~/.oh-my-zsh/completions
+dupsonic completions zsh > ~/.oh-my-zsh/completions/_dupsonic
+
 # Fish
 mkdir -p ~/.config/fish/completions
 dupsonic completions fish > ~/.config/fish/completions/dupsonic.fish
