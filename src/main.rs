@@ -105,11 +105,7 @@ fn main() -> Result<()> {
     let db = database::Database::open(&db_path)?;
 
     match cli.command {
-        Commands::Scan {
-            paths,
-            jobs,
-            force,
-        } => {
+        Commands::Scan { paths, jobs, force } => {
             scanner::scan(&db, &paths, jobs, force)?;
         }
         Commands::FindDupes {

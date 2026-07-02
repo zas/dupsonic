@@ -68,7 +68,11 @@ pub fn print_results(groups: &[DuplicateGroup], format: Format) -> Result<()> {
 
 fn print_human(groups: &[DuplicateGroup]) {
     for (i, group) in groups.iter().enumerate() {
-        println!("── Duplicate Group {} ({} files) ──", i + 1, group.files.len());
+        println!(
+            "── Duplicate Group {} ({} files) ──",
+            i + 1,
+            group.files.len()
+        );
         for file in &group.files {
             let duration = format_duration(file.duration_secs);
             println!(

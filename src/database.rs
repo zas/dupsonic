@@ -22,8 +22,8 @@ pub struct Database {
 impl Database {
     /// Open (or create) the database at the given path.
     pub fn open(path: &Path) -> Result<Self> {
-        let conn =
-            Connection::open(path).with_context(|| format!("Failed to open DB: {}", path.display()))?;
+        let conn = Connection::open(path)
+            .with_context(|| format!("Failed to open DB: {}", path.display()))?;
 
         conn.execute_batch(
             "
@@ -273,7 +273,10 @@ mod tests {
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].path, path);
         assert_eq!(loaded[0].duration_secs, 180.5);
-        assert_eq!(loaded[0].fingerprint, vec![0x12345678, 0xABCDEF01, 0xDEADBEEF]);
+        assert_eq!(
+            loaded[0].fingerprint,
+            vec![0x12345678, 0xABCDEF01, 0xDEADBEEF]
+        );
     }
 
     #[test]

@@ -53,9 +53,7 @@ pub fn scan(db: &Database, paths: &[PathBuf], jobs: usize, force: bool) -> Resul
     let success_count = AtomicUsize::new(0);
     let error_count = AtomicUsize::new(0);
 
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(jobs)
-        .build()?;
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(jobs).build()?;
 
     pool.install(|| {
         to_process.par_iter().for_each(|path| {
@@ -73,7 +71,11 @@ pub fn scan(db: &Database, paths: &[PathBuf], jobs: usize, force: bool) -> Resul
                 Err(e) => {
                     debug!("Failed to fingerprint {}: {}", path.display(), e);
                     if let Err(store_err) = db.store_error(path, &e.to_string()) {
-                        warn!("Failed to store error for {}: {}", path.display(), store_err);
+                        warn!(
+                            "Failed to store error for {}: {}",
+                            path.display(),
+                            store_err
+                        );
                     }
                     error_count.fetch_add(1, Ordering::Relaxed);
                 }

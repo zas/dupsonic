@@ -57,11 +57,7 @@ pub fn fingerprint_file(path: &Path) -> Result<FingerprintResult> {
         .codec_params
         .sample_rate
         .ok_or_else(|| anyhow::anyhow!("Unknown sample rate: {}", path.display()))?;
-    let channels = track
-        .codec_params
-        .channels
-        .map(|c| c.count())
-        .unwrap_or(2);
+    let channels = track.codec_params.channels.map(|c| c.count()).unwrap_or(2);
     let track_id = track.id;
 
     // Try to get duration from container metadata (most formats provide this)
@@ -76,8 +72,7 @@ pub fn fingerprint_file(path: &Path) -> Result<FingerprintResult> {
         .start(sample_rate, channels as u32)
         .map_err(|_| anyhow::anyhow!("Failed to start fingerprinter"))?;
 
-    let max_samples =
-        MAX_FINGERPRINT_DURATION_SECS * sample_rate as u64 * channels as u64;
+    let max_samples = MAX_FINGERPRINT_DURATION_SECS * sample_rate as u64 * channels as u64;
     let mut total_samples: u64 = 0;
     let mut finished_fingerprinting = false;
 

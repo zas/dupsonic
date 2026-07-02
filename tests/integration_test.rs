@@ -8,9 +8,7 @@ use std::path::Path;
 use tempfile::TempDir;
 
 use dupsonic::database::Database;
-use dupsonic::fingerprint::{
-    compare_fingerprints, durations_compatible, fingerprint_file,
-};
+use dupsonic::fingerprint::{compare_fingerprints, durations_compatible, fingerprint_file};
 use dupsonic::matcher::find_duplicates;
 
 /// Generate a WAV file containing a sine wave.
@@ -92,7 +90,9 @@ fn generate_noise_wav(duration_secs: f64, sample_rate: u32, path: &Path) {
     // Generate pseudo-random noise using a simple LCG PRNG
     let mut rng_state: u64 = 0xDEADBEEF12345678;
     for _ in 0..num_samples {
-        rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        rng_state = rng_state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let sample_i16 = ((rng_state >> 33) as i32 - 16384) as i16;
         file.write_all(&sample_i16.to_le_bytes()).unwrap();
     }
@@ -165,7 +165,10 @@ fn test_identical_files_produce_identical_fingerprints() {
     let fp2 = fingerprint_file(&wav2).unwrap();
 
     let score = compare_fingerprints(&fp1.fingerprint, &fp2.fingerprint);
-    assert_eq!(score, 1.0, "Identical audio should produce identical fingerprints");
+    assert_eq!(
+        score, 1.0,
+        "Identical audio should produce identical fingerprints"
+    );
 }
 
 #[test]
@@ -260,7 +263,12 @@ fn test_full_pipeline_finds_duplicates() {
     let groups = find_duplicates(&db, 0.8, false).unwrap();
 
     // Should find exactly 1 group with the 3 duplicates
-    assert_eq!(groups.len(), 1, "Expected 1 duplicate group, got {}", groups.len());
+    assert_eq!(
+        groups.len(),
+        1,
+        "Expected 1 duplicate group, got {}",
+        groups.len()
+    );
     assert_eq!(
         groups[0].files.len(),
         3,
