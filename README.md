@@ -207,8 +207,34 @@ Both tools support incremental scanning with SQLite caching and handle large col
 dupsonic is designed to complement [MusicBrainz Picard](https://picard.musicbrainz.org/):
 
 - **Before Picard**: find and remove duplicates so Picard doesn't have to process them
-- **After Picard**: use `identify --dupes-only` to leverage MBIDs that Picard wrote to your tags
-- **From Picard**: JSON output enables future plugin integration via subprocess
+- **After Picard**: use `dupsonic identify` to leverage MBIDs that Picard wrote to your tags
+- **As Picard's fingerprinter**: use `dupsonic fpcalc` as a faster drop-in replacement for fpcalc
+
+### Using dupsonic as Picard's fingerprinter
+
+dupsonic can replace Chromaprint's `fpcalc` for fingerprinting in Picard. When a file has already been scanned by dupsonic, the fingerprint is returned instantly from cache (no audio decoding needed).
+
+**Setup:**
+
+1. Create a wrapper script:
+
+   **Linux/macOS** — save as `~/bin/dupsonic-fpcalc` and make executable:
+   ```bash
+   #!/bin/sh
+   exec dupsonic fpcalc "$@"
+   ```
+
+   **Windows** — save as `dupsonic-fpcalc.bat`:
+   ```batch
+   @echo off
+   dupsonic fpcalc %*
+   ```
+
+2. In Picard, go to *Options → Fingerprinting* and set the fpcalc path to your wrapper script.
+
+Picard calls `<fpcalc> -json -length 120 <file>` — dupsonic accepts the same arguments and produces compatible JSON output.
+
+**Tip:** Run `dupsonic scan ~/Music` first to pre-populate the cache. Then Picard's fingerprint lookups will be instant for all scanned files.
 
 ## Database location
 
