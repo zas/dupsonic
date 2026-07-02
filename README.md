@@ -73,6 +73,40 @@ dupsonic find-dupes --format json        # JSON output (for scripting)
 dupsonic find-dupes --format jsonl       # JSON Lines (streaming)
 ```
 
+### `find-dupes --exec` — Act on duplicates
+
+```bash
+# Preview what would happen (default is dry-run)
+dupsonic find-dupes --exec "trash-put {}" --keep best
+
+# Actually execute
+dupsonic find-dupes --exec "rm {}" --keep best --confirm
+
+# Keep FLAC files, remove the rest
+dupsonic find-dupes --exec "rm {}" --keep ext:flac --confirm
+
+# Keep files in your curated library
+dupsonic find-dupes --exec "rm {}" --keep regex:"^/home/user/Music/Library/" --confirm
+
+# Move lossy copies to a folder
+dupsonic find-dupes --exec "mv {} /tmp/dupes/" --keep ext:flac,wav --confirm
+```
+
+**`--keep` strategies** decide which file to preserve in each group:
+
+| Strategy | Keeps |
+|----------|-------|
+| `best` (default) | Highest quality: lossless > lossy, then sample rate, bit depth, file size |
+| `ext:flac,wav` | Files matching the given extension(s) (case-insensitive) |
+| `regex:<pattern>` | Files whose path matches the regex |
+| `iregex:<pattern>` | Same, case-insensitive |
+| `largest` / `smallest` | By file size |
+| `newest` / `oldest` | By modification time |
+
+When multiple files match the keep strategy, the best quality among them is kept. When *no* file matches, the group is skipped entirely (nothing is executed).
+
+**Safety:** `--confirm` is required to execute. Without it, dupsonic only shows what would happen. Paths are properly shell-quoted to handle spaces, parentheses, and special characters safely.
+
 ### `identify` — Confirm duplicates via MusicBrainz
 
 ```bash
@@ -88,6 +122,16 @@ dupsonic identify --dupes-only
 ```
 
 Register for a free key at https://acoustid.org/new-application.
+
+### `exclude` / `include` — Manage false positives
+
+```bash
+dupsonic exclude file1.flac file2.mp3    # hide files from duplicate results
+dupsonic include file1.flac              # re-include a file
+dupsonic include --all                   # clear all exclusions
+```
+
+Excluded files won't appear in any future `find-dupes` results. Useful for files that are acoustically similar but intentionally kept (e.g., a live version vs studio version).
 
 ### `status` / `clean-cache`
 
