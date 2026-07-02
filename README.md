@@ -107,10 +107,23 @@ dupsonic scan ~/Music/*.flac             # shell glob expansion
 dupsonic scan -j 8 ~/Music              # use 8 parallel workers
 dupsonic scan --length 15 ~/Music       # fast scan (15s, like soundalike)
 dupsonic scan --length 300 ~/Music      # for podcasts/audiobooks
+dupsonic scan --ignore "*.m4p" ~/Music  # skip files matching pattern
+dupsonic scan -i "**/Podcasts/**" -i "**/Audiobooks/**" ~/Music
 dupsonic scan --force ~/Music           # re-fingerprint everything
 ```
 
 Fingerprints are cached — subsequent scans only process new or modified files. Changing `--length` automatically re-scans affected files.
+
+**`.dupsonic-ignore` file:** Place a `.dupsonic-ignore` file in your music directory to permanently skip certain files (gitignore syntax, one pattern per line):
+
+```
+# .dupsonic-ignore
+*.m4p
+**/Podcasts/**
+**/Audiobooks/**
+```
+
+Patterns from `.dupsonic-ignore` are combined with `--ignore` CLI flags.
 
 ### `find-dupes` — Find duplicates
 
@@ -182,6 +195,11 @@ dupsonic clean-cache                     # remove entries for deleted files
 **Human** (default), **JSON** (`--format json`), **JSON Lines** (`--format jsonl`).
 
 With `--details`, JSON includes: `format`, `size_bytes`, `sample_rate`, `bits_per_sample`, `channels`, `bitrate_kbps`, `recording_mbid`, `acoustid`, and `tags` (artist/title/album).
+
+For scripting, use `-q` (quiet) to suppress progress bars:
+```bash
+dupsonic -q find-dupes --format json > dupes.json
+```
 
 ## Performance
 
