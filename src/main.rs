@@ -59,6 +59,10 @@ enum Commands {
         /// Find duplicates of a specific file only
         #[arg(long, value_name = "PATH")]
         r#for: Option<PathBuf>,
+
+        /// Include file details in output (size, format, tags, MBIDs)
+        #[arg(long)]
+        details: bool,
     },
 
     /// Show scan status and database statistics
@@ -132,13 +136,15 @@ fn main() -> Result<()> {
             same_tree,
             format,
             r#for,
+            details,
         } => {
             let groups = if let Some(ref target) = r#for {
                 matcher::find_duplicates_for(&db, target, threshold)?
             } else {
                 matcher::find_duplicates(&db, threshold, same_tree)?
             };
-            output::print_results(&groups, format)?;
+            let db_ref = if details { Some(&db) } else { None };
+            output::print_results(&groups, format, details, db_ref)?;
         }
         Commands::Status => {
             let stats = db.stats()?;

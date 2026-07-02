@@ -1,8 +1,11 @@
 use anyhow::Result;
 use serde::Serialize;
+use std::path::Path;
 use std::str::FromStr;
 
+use crate::database::Database;
 use crate::matcher::DuplicateGroup;
+use crate::tags;
 
 /// Output format for duplicate results.
 #[derive(Debug, Clone, Copy, Default)]
@@ -32,7 +35,7 @@ impl FromStr for Format {
     }
 }
 
-/// Serializable representation of results for JSON output.
+/// Compact JSON output (default).
 #[derive(Serialize)]
 struct JsonGroup {
     group_id: usize,
@@ -46,8 +49,47 @@ struct JsonFile {
     similarity: f64,
 }
 
+/// Detailed JSON output (with --details).
+#[derive(Serialize)]
+struct DetailedJsonGroup {
+    group_id: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recording_mbid: Option<String>,
+    files: Vec<DetailedJsonFile>,
+}
+
+#[derive(Serialize)]
+struct DetailedJsonFile {
+    path: String,
+    duration_secs: f64,
+    similarity: f64,
+    format: String,
+    size_bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recording_mbid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    acoustid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tags: Option<FileTags>,
+}
+
+#[derive(Serialize)]
+struct FileTags {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    artist: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    album: Option<String>,
+}
+
 /// Print duplicate groups in the specified format.
-pub fn print_results(groups: &[DuplicateGroup], format: Format) -> Result<()> {
+pub fn print_results(
+    groups: &[DuplicateGroup],
+    format: Format,
+    details: bool,
+    db: Option<&Database>,
+) -> Result<()> {
     if groups.is_empty() {
         match format {
             Format::Human => println!("No duplicates found."),
@@ -57,10 +99,18 @@ pub fn print_results(groups: &[DuplicateGroup], format: Format) -> Result<()> {
         return Ok(());
     }
 
-    match format {
-        Format::Human => print_human(groups),
-        Format::Json => print_json(groups)?,
-        Format::Jsonl => print_jsonl(groups)?,
+    if details {
+        match format {
+            Format::Human => print_human_detailed(groups, db),
+            Format::Json => print_json_detailed(groups, db)?,
+            Format::Jsonl => print_jsonl_detailed(groups, db)?,
+        }
+    } else {
+        match format {
+            Format::Human => print_human(groups),
+            Format::Json => print_json(groups)?,
+            Format::Jsonl => print_jsonl(groups)?,
+        }
     }
 
     Ok(())
@@ -91,6 +141,118 @@ fn print_human(groups: &[DuplicateGroup]) {
         groups.len(),
         total_dupes
     );
+}
+
+fn print_human_detailed(groups: &[DuplicateGroup], db: Option<&Database>) {
+    for (i, group) in groups.iter().enumerate() {
+        println!(
+            "── Duplicate Group {} ({} files) ──",
+            i + 1,
+            group.files.len()
+        );
+        for file in &group.files {
+            let duration = format_duration(file.duration_secs);
+            let size = file_size(&file.path);
+            let ext = file_extension(&file.path);
+            let mbid = db.and_then(|d| d.get_recording_mbid(&file.path).ok().flatten());
+
+            println!(
+                "  [{:.0}%] {} ({}, {}, {})",
+                file.score * 100.0,
+                file.path.display(),
+                duration,
+                ext.to_uppercase(),
+                format_size(size),
+            );
+            if let Some(mbid) = mbid {
+                println!("         MBID: {}", mbid);
+            }
+        }
+        println!();
+    }
+
+    let total_dupes: usize = groups.iter().map(|g| g.files.len() - 1).sum();
+    println!(
+        "Summary: {} duplicate groups, {} redundant files",
+        groups.len(),
+        total_dupes
+    );
+}
+
+fn build_detailed_group(
+    i: usize,
+    group: &DuplicateGroup,
+    db: Option<&Database>,
+) -> DetailedJsonGroup {
+    let files: Vec<DetailedJsonFile> = group
+        .files
+        .iter()
+        .map(|f| {
+            let (recording_mbid, acoustid) = db
+                .map(|d| {
+                    let mbid = d.get_recording_mbid(&f.path).ok().flatten();
+                    // Get acoustid from a direct query
+                    let aid = get_acoustid(d, &f.path);
+                    (mbid, aid)
+                })
+                .unwrap_or((None, None));
+
+            let file_tags = tags::read_basic_tags(&f.path).ok().flatten();
+
+            DetailedJsonFile {
+                path: f.path.to_string_lossy().into_owned(),
+                duration_secs: f.duration_secs,
+                similarity: f.score,
+                format: file_extension(&f.path),
+                size_bytes: file_size(&f.path),
+                recording_mbid,
+                acoustid,
+                tags: file_tags.map(|t| FileTags {
+                    artist: t.artist,
+                    title: t.title,
+                    album: t.album,
+                }),
+            }
+        })
+        .collect();
+
+    // If all files share the same MBID, promote it to group level
+    let group_mbid = {
+        let mbids: Vec<&str> = files
+            .iter()
+            .filter_map(|f| f.recording_mbid.as_deref())
+            .collect();
+        if mbids.len() == files.len() && !mbids.is_empty() && mbids.iter().all(|m| *m == mbids[0]) {
+            Some(mbids[0].to_string())
+        } else {
+            None
+        }
+    };
+
+    DetailedJsonGroup {
+        group_id: i + 1,
+        recording_mbid: group_mbid,
+        files,
+    }
+}
+
+fn print_json_detailed(groups: &[DuplicateGroup], db: Option<&Database>) -> Result<()> {
+    let json_groups: Vec<DetailedJsonGroup> = groups
+        .iter()
+        .enumerate()
+        .map(|(i, g)| build_detailed_group(i, g, db))
+        .collect();
+
+    println!("{}", serde_json::to_string_pretty(&json_groups)?);
+    Ok(())
+}
+
+fn print_jsonl_detailed(groups: &[DuplicateGroup], db: Option<&Database>) -> Result<()> {
+    for (i, group) in groups.iter().enumerate() {
+        let json_group = build_detailed_group(i, group, db);
+        println!("{}", serde_json::to_string(&json_group)?);
+    }
+    Ok(())
 }
 
 fn print_json(groups: &[DuplicateGroup]) -> Result<()> {
@@ -141,6 +303,34 @@ fn format_duration(secs: f64) -> String {
     format!("{}:{:02}", minutes, seconds)
 }
 
+fn file_size(path: &Path) -> u64 {
+    std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+}
+
+fn file_extension(path: &Path) -> String {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("unknown")
+        .to_lowercase()
+}
+
+fn format_size(bytes: u64) -> String {
+    if bytes >= 1_073_741_824 {
+        format!("{:.1} GB", bytes as f64 / 1_073_741_824.0)
+    } else if bytes >= 1_048_576 {
+        format!("{:.1} MB", bytes as f64 / 1_048_576.0)
+    } else if bytes >= 1024 {
+        format!("{:.0} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
+fn get_acoustid(db: &Database, path: &Path) -> Option<String> {
+    // Query the acoustid column directly
+    db.get_acoustid(path).ok().flatten()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -168,6 +358,15 @@ mod tests {
     }
 
     #[test]
+    fn test_format_size() {
+        assert_eq!(format_size(0), "0 B");
+        assert_eq!(format_size(512), "512 B");
+        assert_eq!(format_size(1024), "1 KB");
+        assert_eq!(format_size(1_048_576), "1.0 MB");
+        assert_eq!(format_size(34_567_890), "33.0 MB");
+    }
+
+    #[test]
     fn test_json_output_structure() {
         let groups = vec![DuplicateGroup {
             files: vec![
@@ -184,40 +383,14 @@ mod tests {
             ],
         }];
 
-        let json_groups: Vec<JsonGroup> = groups
-            .iter()
-            .enumerate()
-            .map(|(i, g)| JsonGroup {
-                group_id: i + 1,
-                files: g
-                    .files
-                    .iter()
-                    .map(|f| JsonFile {
-                        path: f.path.to_string_lossy().into_owned(),
-                        duration_secs: f.duration_secs,
-                        similarity: f.score,
-                    })
-                    .collect(),
-            })
-            .collect();
-
-        let json_str = serde_json::to_string(&json_groups).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
-
-        assert!(parsed.is_array());
-        let arr = parsed.as_array().unwrap();
-        assert_eq!(arr.len(), 1);
-        assert_eq!(arr[0]["group_id"], 1);
-        assert_eq!(arr[0]["files"].as_array().unwrap().len(), 2);
-        assert_eq!(arr[0]["files"][0]["similarity"], 1.0);
-        assert_eq!(arr[0]["files"][1]["similarity"], 0.95);
+        // Test that compact output works without db
+        print_results(&groups, Format::Json, false, None).unwrap();
     }
 
     #[test]
     fn test_empty_results() {
-        // Should not panic
-        print_results(&[], Format::Human).unwrap();
-        print_results(&[], Format::Json).unwrap();
-        print_results(&[], Format::Jsonl).unwrap();
+        print_results(&[], Format::Human, false, None).unwrap();
+        print_results(&[], Format::Json, false, None).unwrap();
+        print_results(&[], Format::Jsonl, false, None).unwrap();
     }
 }

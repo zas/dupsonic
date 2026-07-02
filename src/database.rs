@@ -272,6 +272,19 @@ impl Database {
             .ok();
         Ok(result)
     }
+
+    /// Get the AcoustID for a file, if resolved.
+    pub fn get_acoustid(&self, path: &Path) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let result = conn
+            .query_row(
+                "SELECT acoustid FROM files WHERE path = ?1",
+                params![path.to_string_lossy().as_ref()],
+                |row| row.get(0),
+            )
+            .ok();
+        Ok(result)
+    }
 }
 
 /// A file with its fingerprint loaded from the database.
