@@ -1,3 +1,9 @@
+//! Audio decoding and Chromaprint fingerprint generation.
+//!
+//! Uses [Symphonia](https://docs.rs/symphonia) for format-agnostic audio decoding
+//! and [chromaprint-next](https://docs.rs/chromaprint-next) for fingerprint generation.
+//! The fingerprints are bit-identical to those produced by the reference `fpcalc` tool.
+
 use anyhow::{Context, Result};
 use chromaprint::{Algorithm, Fingerprinter};
 use std::path::Path;

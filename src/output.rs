@@ -1,3 +1,8 @@
+//! Output formatting for duplicate results.
+//!
+//! Supports human-readable tables, JSON (for tool integration), and JSON Lines
+//! (one object per group, for streaming consumption).
+
 use anyhow::Result;
 use serde::Serialize;
 use std::path::Path;

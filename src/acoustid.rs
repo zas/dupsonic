@@ -220,7 +220,7 @@ impl AcoustIdClient {
     }
 }
 
-/// Encode a raw fingerprint (Vec<u32>) to the compressed+base64 format
+/// Encode a raw fingerprint (`Vec<u32>`) to the compressed+base64 format
 /// expected by the AcoustID API (and fpcalc output).
 pub fn encode_fingerprint(fingerprint: &[u32]) -> String {
     chromaprint::encode_fingerprint(fingerprint, chromaprint::Algorithm::default())

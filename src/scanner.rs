@@ -1,3 +1,9 @@
+//! Directory scanning and parallel fingerprinting orchestration.
+//!
+//! Discovers audio files by extension, respects `.dupsonic-ignore` files and
+//! `--ignore` patterns, and fingerprints files in parallel using Rayon.
+//! Only new or modified files are processed (change detection via size + mtime).
+
 use anyhow::Result;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use indicatif::{ProgressBar, ProgressStyle};

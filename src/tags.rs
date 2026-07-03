@@ -87,17 +87,24 @@ pub fn read_recording_mbid(path: &Path) -> Result<Option<String>> {
 /// Basic tags extracted from a file.
 #[derive(Debug, Clone)]
 pub struct BasicTags {
+    /// Artist name (ID3: TPE1, Vorbis: ARTIST, MP4: ©ART).
     pub artist: Option<String>,
+    /// Track title (ID3: TIT2, Vorbis: TITLE, MP4: ©nam).
     pub title: Option<String>,
+    /// Album name (ID3: TALB, Vorbis: ALBUM, MP4: ©alb).
     pub album: Option<String>,
 }
 
 /// Audio format details for a file.
 #[derive(Debug, Clone)]
 pub struct AudioInfo {
+    /// Sample rate in Hz (e.g. 44100, 48000, 96000).
     pub sample_rate: Option<u32>,
+    /// Bits per sample (e.g. 16, 24, 32). `None` for lossy formats.
     pub bits_per_sample: Option<u32>,
+    /// Number of audio channels.
     pub channels: Option<usize>,
+    /// Average bitrate in kbps.
     pub bitrate_kbps: Option<u32>,
 }
 

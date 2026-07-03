@@ -1,3 +1,9 @@
+//! LSH-based duplicate detection and grouping.
+//!
+//! Uses Locality-Sensitive Hashing (banding on raw sub-fingerprints) to find
+//! candidate duplicate pairs in O(n) time, then verifies candidates with
+//! bit-error-rate comparison and groups them transitively using Union-Find.
+
 use anyhow::Result;
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
@@ -19,7 +25,9 @@ pub struct DuplicateGroup {
 /// A single file within a duplicate group.
 #[derive(Debug, Clone)]
 pub struct DuplicateFile {
+    /// Absolute path to the audio file.
     pub path: std::path::PathBuf,
+    /// Full duration of the audio in seconds.
     pub duration_secs: f64,
     /// Similarity score to the group's reference file (first file)
     pub score: f64,
@@ -496,6 +504,7 @@ pub struct UnionFind {
 }
 
 impl UnionFind {
+    /// Create a new Union-Find structure with `n` disjoint elements.
     pub fn new(n: usize) -> Self {
         Self {
             parent: (0..n).collect(),
@@ -513,6 +522,7 @@ impl UnionFind {
         x
     }
 
+    /// Merge the sets containing `x` and `y` (union by rank).
     pub fn union(&mut self, x: usize, y: usize) {
         let rx = self.find(x);
         let ry = self.find(y);
@@ -529,6 +539,7 @@ impl UnionFind {
         }
     }
 
+    /// Return `true` if `x` and `y` are in the same set.
     pub fn connected(&mut self, x: usize, y: usize) -> bool {
         self.find(x) == self.find(y)
     }

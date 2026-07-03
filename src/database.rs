@@ -1,3 +1,9 @@
+//! SQLite-backed fingerprint cache with change detection.
+//!
+//! Stores acoustic fingerprints alongside file metadata (size, mtime) so that
+//! subsequent scans only re-fingerprint new or modified files. The database also
+//! tracks excluded files, MusicBrainz recording IDs, and scan failures.
+
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
@@ -8,9 +14,13 @@ use crate::fingerprint::FingerprintResult;
 /// Statistics about the database contents.
 #[derive(Debug)]
 pub struct Stats {
+    /// Total number of files tracked in the database.
     pub total_files: u64,
+    /// Files with a successfully computed fingerprint.
     pub fingerprinted: u64,
+    /// Files that failed fingerprinting (decode errors, etc.).
     pub failed: u64,
+    /// Files whose on-disk metadata no longer matches the cached entry.
     pub stale: u64,
 }
 
@@ -454,8 +464,11 @@ impl Database {
 /// A file with its fingerprint loaded from the database.
 #[derive(Debug, Clone)]
 pub struct FileFingerprint {
+    /// Absolute path to the audio file.
     pub path: PathBuf,
+    /// Full duration of the audio in seconds.
     pub duration_secs: f64,
+    /// Raw Chromaprint fingerprint as a vector of `u32` sub-fingerprints.
     pub fingerprint: Vec<u32>,
 }
 
