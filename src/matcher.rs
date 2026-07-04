@@ -90,7 +90,7 @@ fn find_duplicates_from_db(
     threshold: f64,
     same_tree: bool,
 ) -> Result<Vec<DuplicateGroup>> {
-    println!("Phase 1: Finding candidate pairs (DB)...");
+    eprintln!("Phase 1: Finding candidate pairs (DB)...");
     let mut candidates = db.find_candidates_from_bands()?;
 
     // Apply duration + same_tree filters
@@ -101,15 +101,15 @@ fn find_duplicates_from_db(
         true
     });
 
-    println!("  Found {} candidate pairs", candidates.len());
+    eprintln!("  Found {} candidate pairs", candidates.len());
 
     if candidates.is_empty() {
-        println!("No duplicates found.");
+        eprintln!("No duplicates found.");
         return Ok(Vec::new());
     }
 
     // Phase 2: Load only candidate fingerprints and verify
-    println!("Phase 2: Verifying {} candidates...", candidates.len());
+    eprintln!("Phase 2: Verifying {} candidates...", candidates.len());
 
     let mut uf_map: HashMap<PathBuf, usize> = HashMap::new();
     let mut uf_idx = 0;
@@ -195,9 +195,9 @@ fn find_duplicates_from_db(
         })
         .collect();
 
-    groups.sort_by_key(|g| std::cmp::Reverse(g.files.len()));
+    groups.sort_by(|a, b| a.id.cmp(&b.id));
 
-    println!("Found {} duplicate groups", groups.len());
+    eprintln!("Found {} duplicate groups", groups.len());
     Ok(groups)
 }
 
@@ -229,7 +229,7 @@ pub fn filter_by_mbids(groups: Vec<DuplicateGroup>, db: &Database) -> Vec<Duplic
 
     let removed = before - filtered.len();
     if removed > 0 {
-        println!(
+        eprintln!(
             "  Removed {} group(s) with different recording MBIDs",
             removed
         );

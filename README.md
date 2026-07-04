@@ -39,11 +39,11 @@ dupsonic find-dupes         # show duplicate groups
 That's it. Output:
 
 ```
-── Duplicate Group 1 (2 files, 97% similar) ──
+── Duplicate Group a6bacb6d (2 files, 97% similar) ──
   ~/Music/Artist/Album/track.flac (3:18)
   ~/Music/Downloads/track.mp3 (3:18)
 
-── Duplicate Group 2 (2 files, 97% similar) ──
+── Duplicate Group 759f5320 (2 files, 97% similar) ──
   ~/Music/Artist/Album/song.flac (2:52)
   ~/Music/Old/song.ogg (2:52)
 
@@ -59,7 +59,7 @@ dupsonic find-dupes --details
 ```
 
 ```
-── Duplicate Group 1 (2 files, 97% similar) ──
+── Duplicate Group a6bacb6d (2 files, 97% similar) ──
   ~/Music/Artist/Album/track.flac (3:18, FLAC, 48kHz/24bit ~1606kbps 38.1 MB)
   ~/Music/Downloads/track.mp3 (3:18, MP3, 44kHz ~178kbps 3.7 MB)
 ```
@@ -69,7 +69,7 @@ dupsonic find-dupes --details
 When files have 100% identical fingerprints, dupsonic further classifies them using cached SHA-256 hashes:
 
 ```
-── Duplicate Group 1 (3 files, 100% similar) ──
+── Duplicate Group 3f8c21ab (3 files, 100% similar) ──
   [exact copy] ~/Music/Artist/track.flac (3:18)
   [exact copy] ~/Music/Backup/track.flac (3:18)
   [same audio] ~/Music/Artist/track_retagged.flac (3:18)
@@ -249,7 +249,7 @@ JSON structure:
 ```json
 [
   {
-    "group_id": 1,
+    "id": "a6bacb6d...",
     "similarity": 0.97,
     "files": [
       { "path": "/music/track.flac", "duration_secs": 198.5 },
@@ -261,9 +261,9 @@ JSON structure:
 
 The `match_kind` field appears only for 100% matches: `"exact_copy"` or `"same_audio"`.
 
-For scripting, use `-q` (quiet) to suppress progress bars:
+Progress messages go to stderr, so JSON output can be piped directly:
 ```bash
-dupsonic -q find-dupes --format json > dupes.json
+dupsonic find-dupes --format json 2>/dev/null | jq '.[] | .id'
 ```
 
 ## Performance
