@@ -14,7 +14,7 @@ use dupsonic::{database, matcher, output, scanner};
 )]
 struct Cli {
     /// Path to the fingerprint cache database
-    #[arg(long)]
+    #[arg(long, env = "DUPSONIC_DB")]
     db: Option<PathBuf>,
 
     /// Verbosity level (-v, -vv, -vvv)
