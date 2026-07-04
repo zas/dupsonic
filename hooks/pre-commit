@@ -1,0 +1,13 @@
+#!/bin/sh
+# Pre-commit hook for dupsonic
+# Install: ln -sf ../../hooks/pre-commit .git/hooks/pre-commit
+
+set -e
+
+echo "Running cargo fmt..."
+cargo fmt --all -- --check
+
+echo "Running cargo clippy..."
+cargo clippy --tests -- -D warnings
+
+echo "Pre-commit checks passed."
