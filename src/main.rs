@@ -189,6 +189,7 @@ fn main() -> Result<()> {
         )
         .init();
 
+    let custom_db = cli.db.is_some();
     let db_path = cli.db.unwrap_or_else(default_db_path);
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -216,6 +217,37 @@ fn main() -> Result<()> {
             apply,
             no_mbid_filter,
         } => {
+            // Check if there are enough fingerprints before running the matcher
+            if r#for.is_none() {
+                let stats = db.stats()?;
+                if stats.fingerprinted < 2 {
+                    if stats.fingerprinted == 0 {
+                        eprintln!("No files have been scanned yet.");
+                        eprintln!();
+                        eprintln!("Run a scan first to fingerprint your audio library:");
+                        eprintln!();
+                        eprintln!("  dupsonic scan <path-to-music>");
+                    } else {
+                        eprintln!(
+                            "Only {} file has been scanned — need at least 2 to find duplicates.",
+                            stats.fingerprinted
+                        );
+                        eprintln!();
+                        eprintln!("Scan more files:");
+                        eprintln!();
+                        eprintln!("  dupsonic scan <path-to-music>");
+                    }
+                    if custom_db {
+                        eprintln!();
+                        eprintln!(
+                            "Note: using custom database '{}'. Make sure you use the same --db path when scanning.",
+                            db_path.display()
+                        );
+                    }
+                    std::process::exit(1);
+                }
+            }
+
             let groups = if let Some(ref target) = r#for {
                 matcher::find_duplicates_for(&db, target, threshold)?
             } else {

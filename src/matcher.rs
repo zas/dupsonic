@@ -194,7 +194,7 @@ fn find_duplicates_in_memory(
     info!("Loaded {} fingerprints", n);
 
     if n < 2 {
-        println!("Not enough fingerprinted files to compare.");
+        info!("Not enough fingerprinted files to compare (found {})", n);
         return Ok(Vec::new());
     }
 
