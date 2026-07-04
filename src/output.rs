@@ -43,7 +43,7 @@ impl FromStr for Format {
 /// Compact JSON output (default).
 #[derive(Serialize)]
 struct JsonGroup {
-    group_id: usize,
+    id: String,
     similarity: f64,
     files: Vec<JsonFile>,
 }
@@ -59,7 +59,7 @@ struct JsonFile {
 /// Detailed JSON output (with --details).
 #[derive(Serialize)]
 struct DetailedJsonGroup {
-    group_id: usize,
+    id: String,
     similarity: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     recording_mbid: Option<String>,
@@ -134,10 +134,10 @@ pub fn print_results(
 }
 
 fn print_human(groups: &[DuplicateGroup]) {
-    for (i, group) in groups.iter().enumerate() {
+    for group in groups {
         println!(
             "── Duplicate Group {} ({} files, {:.0}% similar) ──",
-            i + 1,
+            &group.id[..8],
             group.files.len(),
             group.similarity * 100.0,
         );
@@ -162,10 +162,10 @@ fn print_human(groups: &[DuplicateGroup]) {
 }
 
 fn print_human_detailed(groups: &[DuplicateGroup], db: Option<&Database>) {
-    for (i, group) in groups.iter().enumerate() {
+    for group in groups {
         println!(
             "── Duplicate Group {} ({} files, {:.0}% similar) ──",
-            i + 1,
+            &group.id[..8],
             group.files.len(),
             group.similarity * 100.0,
         );
@@ -231,7 +231,6 @@ fn print_human_detailed(groups: &[DuplicateGroup], db: Option<&Database>) {
 }
 
 fn build_detailed_group(
-    i: usize,
     group: &DuplicateGroup,
     db: Option<&Database>,
 ) -> DetailedJsonGroup {
@@ -285,7 +284,7 @@ fn build_detailed_group(
     };
 
     DetailedJsonGroup {
-        group_id: i + 1,
+        id: group.id.clone(),
         similarity: group.similarity,
         recording_mbid: group_mbid,
         files,
@@ -295,8 +294,7 @@ fn build_detailed_group(
 fn print_json_detailed(groups: &[DuplicateGroup], db: Option<&Database>) -> Result<()> {
     let json_groups: Vec<DetailedJsonGroup> = groups
         .iter()
-        .enumerate()
-        .map(|(i, g)| build_detailed_group(i, g, db))
+        .map(|g| build_detailed_group(g, db))
         .collect();
 
     println!("{}", serde_json::to_string_pretty(&json_groups)?);
@@ -304,8 +302,8 @@ fn print_json_detailed(groups: &[DuplicateGroup], db: Option<&Database>) -> Resu
 }
 
 fn print_jsonl_detailed(groups: &[DuplicateGroup], db: Option<&Database>) -> Result<()> {
-    for (i, group) in groups.iter().enumerate() {
-        let json_group = build_detailed_group(i, group, db);
+    for group in groups {
+        let json_group = build_detailed_group(group, db);
         println!("{}", serde_json::to_string(&json_group)?);
     }
     Ok(())
@@ -314,9 +312,8 @@ fn print_jsonl_detailed(groups: &[DuplicateGroup], db: Option<&Database>) -> Res
 fn print_json(groups: &[DuplicateGroup]) -> Result<()> {
     let json_groups: Vec<JsonGroup> = groups
         .iter()
-        .enumerate()
-        .map(|(i, g)| JsonGroup {
-            group_id: i + 1,
+        .map(|g| JsonGroup {
+            id: g.id.clone(),
             similarity: g.similarity,
             files: g
                 .files
@@ -335,9 +332,9 @@ fn print_json(groups: &[DuplicateGroup]) -> Result<()> {
 }
 
 fn print_jsonl(groups: &[DuplicateGroup]) -> Result<()> {
-    for (i, group) in groups.iter().enumerate() {
+    for group in groups {
         let json_group = JsonGroup {
-            group_id: i + 1,
+            id: group.id.clone(),
             similarity: group.similarity,
             files: group
                 .files
@@ -443,6 +440,7 @@ mod tests {
     #[test]
     fn test_json_output_structure() {
         let groups = vec![DuplicateGroup {
+            id: "abcd1234".to_string(),
             similarity: 0.95,
             files: vec![
                 DuplicateFile {

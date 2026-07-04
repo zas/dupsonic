@@ -14,6 +14,9 @@ use crate::fingerprint::{compare_fingerprints, durations_compatible};
 /// A group of files that are acoustic duplicates of each other.
 #[derive(Debug, Clone)]
 pub struct DuplicateGroup {
+    /// Stable identifier (SHA-256 hex), derived from file paths + size + mtime.
+    /// Displayed truncated to 8 chars in human output; full in JSON.
+    pub id: String,
     /// Files in this group, sorted by quality (best first)
     pub files: Vec<DuplicateFile>,
     /// Similarity score between files in this group (0.0 to 1.0)
@@ -185,6 +188,7 @@ fn find_duplicates_from_db(
                 crate::keep::quality_score(b).cmp(&crate::keep::quality_score(a))
             });
             DuplicateGroup {
+                id: compute_group_id(&files),
                 files,
                 similarity: max_score,
             }
@@ -430,9 +434,30 @@ pub fn find_duplicates_for(
     );
 
     Ok(vec![DuplicateGroup {
+        id: compute_group_id(&matches),
         files: matches,
         similarity: max_score,
     }])
+}
+
+/// Compute a stable identifier for a duplicate group.
+///
+/// Hashes (path, size, mtime) of each file in group order.
+/// Changes when group membership changes or any file is modified.
+fn compute_group_id(files: &[DuplicateFile]) -> String {
+    use sha2::{Digest, Sha256};
+
+    let mut hasher = Sha256::new();
+    for file in files {
+        hasher.update(file.path.to_string_lossy().as_bytes());
+        if let Ok(meta) = std::fs::metadata(&file.path) {
+            hasher.update(&meta.len().to_le_bytes());
+            let mtime = crate::database::file_mtime_secs(&meta);
+            hasher.update(&mtime.to_le_bytes());
+        }
+    }
+    let result = hasher.finalize();
+    result.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
 /// Generate candidate pairs using Locality-Sensitive Hashing (banding technique).
