@@ -6,10 +6,17 @@
 
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use crate::fingerprint::FingerprintResult;
+
+/// Cached file metadata: (size, mtime_secs, fingerprint_length).
+pub type CachedMetadata = HashMap<PathBuf, (i64, i64, Option<i64>)>;
+
+/// Cached file hashes: (file_sha256, audio_sha256).
+pub type CachedHashes = HashMap<PathBuf, (Option<String>, Option<String>)>;
 
 /// Statistics about the database contents.
 #[derive(Debug)]
@@ -154,13 +161,13 @@ impl Database {
     /// Returns a map of path -> (size, mtime_secs, fingerprint_length).
     pub fn load_cached_metadata(
         &self,
-    ) -> Result<std::collections::HashMap<PathBuf, (i64, i64, Option<i64>)>> {
+    ) -> Result<CachedMetadata> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT path, size, mtime_secs, fingerprint_length FROM files WHERE fingerprint IS NOT NULL",
         )?;
 
-        let mut map = std::collections::HashMap::new();
+        let mut map = HashMap::new();
         let rows = stmt.query_map([], |row| {
             let path: String = row.get(0)?;
             let size: i64 = row.get(1)?;
@@ -169,10 +176,8 @@ impl Database {
             Ok((path, size, mtime, fp_length))
         })?;
 
-        for row in rows {
-            if let Ok((path, size, mtime, fp_length)) = row {
-                map.insert(PathBuf::from(path), (size, mtime, fp_length));
-            }
+        for (path, size, mtime, fp_length) in rows.flatten() {
+            map.insert(PathBuf::from(path), (size, mtime, fp_length));
         }
 
         Ok(map)
@@ -511,14 +516,14 @@ impl Database {
     /// Returns a map of path -> (file_sha256, audio_sha256).
     pub fn load_hashes(
         &self,
-    ) -> Result<std::collections::HashMap<PathBuf, (Option<String>, Option<String>)>> {
+    ) -> Result<CachedHashes> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT path, file_sha256, audio_sha256 FROM files
              WHERE fingerprint IS NOT NULL AND COALESCE(excluded, 0) = 0",
         )?;
 
-        let mut map = std::collections::HashMap::new();
+        let mut map = HashMap::new();
         let rows = stmt.query_map([], |row| {
             let path: String = row.get(0)?;
             let file_hash: Option<String> = row.get(1)?;
@@ -526,10 +531,8 @@ impl Database {
             Ok((path, file_hash, audio_hash))
         })?;
 
-        for row in rows {
-            if let Ok((path, file_hash, audio_hash)) = row {
-                map.insert(PathBuf::from(path), (file_hash, audio_hash));
-            }
+        for (path, file_hash, audio_hash) in rows.flatten() {
+            map.insert(PathBuf::from(path), (file_hash, audio_hash));
         }
 
         Ok(map)

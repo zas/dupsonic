@@ -318,7 +318,7 @@ pub fn classify_matches(groups: &mut [DuplicateGroup], db: &Database) {
                 fh_groups.entry(file_hashes[pos]).or_default().push(idx);
             }
         }
-        for (_, indices) in &fh_groups {
+        for indices in fh_groups.values() {
             if indices.len() > 1 {
                 for &idx in indices {
                     group.files[idx].match_kind = MatchKind::ExactCopy;
@@ -344,7 +344,7 @@ pub fn classify_matches(groups: &mut [DuplicateGroup], db: &Database) {
                     ah_groups.entry(audio_hashes[pos]).or_default().push(idx);
                 }
             }
-            for (_, indices) in &ah_groups {
+            for indices in ah_groups.values() {
                 if indices.len() > 1 {
                     for &idx in indices {
                         if group.files[idx].match_kind != MatchKind::ExactCopy {
@@ -451,9 +451,9 @@ fn compute_group_id(files: &[DuplicateFile]) -> String {
     for file in files {
         hasher.update(file.path.to_string_lossy().as_bytes());
         if let Ok(meta) = std::fs::metadata(&file.path) {
-            hasher.update(&meta.len().to_le_bytes());
+            hasher.update(meta.len().to_le_bytes());
             let mtime = crate::database::file_mtime_secs(&meta);
-            hasher.update(&mtime.to_le_bytes());
+            hasher.update(mtime.to_le_bytes());
         }
     }
     let result = hasher.finalize();
