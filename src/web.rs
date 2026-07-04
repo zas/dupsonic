@@ -223,10 +223,25 @@ async fn api_dupes(
                 "id": g.id,
                 "similarity": g.similarity,
                 "files": g.files.iter().map(|f| {
+                    let size = std::fs::metadata(&f.path).map(|m| m.len()).unwrap_or(0);
+                    let ext = f.path.extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("?")
+                        .to_uppercase();
+                    let audio_info = crate::tags::read_audio_info(&f.path).ok().flatten();
+                    let sample_rate = audio_info.as_ref().and_then(|a| a.sample_rate);
+                    let bits_per_sample = audio_info.as_ref().and_then(|a| a.bits_per_sample);
+                    let bitrate_kbps = audio_info.as_ref().and_then(|a| a.bitrate_kbps);
+
                     let mut file = serde_json::json!({
                         "path": f.path.to_string_lossy(),
                         "duration_secs": f.duration_secs,
+                        "size": size,
+                        "format": ext,
                     });
+                    if let Some(sr) = sample_rate { file["sample_rate"] = sr.into(); }
+                    if let Some(bps) = bits_per_sample { file["bits_per_sample"] = bps.into(); }
+                    if let Some(br) = bitrate_kbps { file["bitrate_kbps"] = br.into(); }
                     match f.match_kind {
                         MatchKind::ExactCopy => { file["match_kind"] = "exact_copy".into(); }
                         MatchKind::SameAudio => { file["match_kind"] = "same_audio".into(); }

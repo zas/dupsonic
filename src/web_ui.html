@@ -140,6 +140,13 @@ function renderFile(group, file, index) {
   if (file.match_kind === 'exact_copy') badges.push('<span class="file-badge badge-exact">exact copy</span>');
   else if (file.match_kind === 'same_audio') badges.push('<span class="file-badge badge-same-audio">same audio</span>');
   const duration = formatDuration(file.duration_secs);
+  const size = formatSize(file.size || 0);
+  const details = [];
+  if (file.format) details.push(file.format);
+  if (file.sample_rate) details.push((file.sample_rate/1000) + 'kHz');
+  if (file.bits_per_sample) details.push(file.bits_per_sample + 'bit');
+  if (file.bitrate_kbps) details.push('~' + file.bitrate_kbps + 'kbps');
+  details.push(size);
   const actions = `
     <div class="file-actions">
       <button class="danger" onclick="doAction('${group.id}', ${index}, 'delete')">Delete</button>
@@ -149,7 +156,7 @@ function renderFile(group, file, index) {
     <div class="file" id="file-${group.id.slice(0,8)}-${index}">
       <div class="file-info">
         <div class="file-path">${escapeHtml(file.path)}</div>
-        <div class="file-meta">${duration} ${badges.join(' ')}</div>
+        <div class="file-meta">${duration} · ${details.join(' · ')} ${badges.join(' ')}</div>
       </div>
       ${actions}
     </div>`;
@@ -214,6 +221,13 @@ function formatDuration(secs) {
   const m = Math.floor(secs / 60);
   const s = Math.floor(secs % 60);
   return `${m}:${s.toString().padStart(2,'0')}`;
+}
+
+function formatSize(bytes) {
+  if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + ' GB';
+  if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + ' MB';
+  if (bytes >= 1024) return Math.round(bytes / 1024) + ' KB';
+  return bytes + ' B';
 }
 
 function escapeHtml(s) {
