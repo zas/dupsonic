@@ -22,6 +22,17 @@ pub struct DuplicateGroup {
     pub files: Vec<DuplicateFile>,
 }
 
+/// How closely two files match (only meaningful for 100% fingerprint matches).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatchKind {
+    /// Files are byte-for-byte identical (same hash).
+    ExactCopy,
+    /// Same audio content but different metadata, container, or encoding.
+    SameAudio,
+    /// Similarity-based match (score < 1.0).
+    Similar,
+}
+
 /// A single file within a duplicate group.
 #[derive(Debug, Clone)]
 pub struct DuplicateFile {
@@ -31,6 +42,8 @@ pub struct DuplicateFile {
     pub duration_secs: f64,
     /// Similarity score to the group's reference file (first file)
     pub score: f64,
+    /// Classification of the match (exact copy, same audio, or similar).
+    pub match_kind: MatchKind,
 }
 
 // --- LSH Configuration ---
@@ -169,6 +182,7 @@ fn find_duplicates_from_db(
                         path: path.clone(),
                         duration_secs: duration,
                         score,
+                        match_kind: MatchKind::Similar,
                     }
                 })
                 .collect();
@@ -264,6 +278,7 @@ fn find_duplicates_in_memory(
                         path: all_fps[idx].path.clone(),
                         duration_secs: all_fps[idx].duration_secs,
                         score,
+                        match_kind: MatchKind::Similar,
                     }
                 })
                 .collect();
@@ -313,6 +328,86 @@ pub fn filter_by_mbids(groups: Vec<DuplicateGroup>, db: &Database) -> Vec<Duplic
     }
 
     filtered
+}
+
+/// Classify 100% fingerprint matches as exact copies or same-audio.
+///
+/// For groups where all files have a 100% fingerprint match, computes SHA-256
+/// hashes to determine if they're byte-identical (exact copies) or just have
+/// the same audio content with different metadata/format.
+pub fn classify_matches(groups: &mut [DuplicateGroup]) {
+    use std::collections::HashMap;
+
+    for group in groups.iter_mut() {
+        // Collect indices of files with 100% fingerprint match
+        let perfect_indices: Vec<usize> = group
+            .files
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| f.score >= 1.0)
+            .map(|(i, _)| i)
+            .collect();
+
+        if perfect_indices.len() < 2 {
+            continue; // Need at least 2 perfect matches to classify
+        }
+
+        // Compute hashes for all 100% match files
+        let hashes: Vec<Option<String>> = perfect_indices
+            .iter()
+            .map(|&idx| file_sha256(&group.files[idx].path))
+            .collect();
+
+        // Check if all hashed files share the same hash
+        let first_hash = &hashes[0];
+        let all_same = hashes.iter().all(|h| h == first_hash) && first_hash.is_some();
+
+        if all_same {
+            // All 100% files are byte-identical
+            for &idx in &perfect_indices {
+                group.files[idx].match_kind = MatchKind::ExactCopy;
+            }
+        } else {
+            // Group by hash to find which are exact copies of each other
+            let mut hash_groups: HashMap<String, Vec<usize>> = HashMap::new();
+            for (pos, &idx) in perfect_indices.iter().enumerate() {
+                let key = hashes[pos]
+                    .clone()
+                    .unwrap_or_else(|| format!("__unhashable_{}", idx));
+                hash_groups.entry(key).or_default().push(idx);
+            }
+
+            for (_, indices) in &hash_groups {
+                let kind = if indices.len() > 1 {
+                    MatchKind::ExactCopy
+                } else {
+                    MatchKind::SameAudio
+                };
+                for &idx in indices {
+                    group.files[idx].match_kind = kind;
+                }
+            }
+        }
+    }
+}
+
+/// Compute SHA-256 hash of a file, returning hex string.
+fn file_sha256(path: &std::path::Path) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    use std::fs::File;
+    use std::io::Read;
+
+    let mut file = File::open(path).ok()?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 65536];
+    loop {
+        let n = file.read(&mut buf).ok()?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Some(format!("{:x}", hasher.finalize()))
 }
 
 /// Find duplicates of a specific file.
@@ -371,6 +466,7 @@ pub fn find_duplicates_for(
                 path: fp.path.clone(),
                 duration_secs: fp.duration_secs,
                 score,
+                match_kind: MatchKind::Similar,
             });
         }
     }
@@ -386,6 +482,7 @@ pub fn find_duplicates_for(
             path: target,
             duration_secs: target_fp.duration_secs,
             score: 1.0,
+            match_kind: MatchKind::Similar,
         },
     );
 

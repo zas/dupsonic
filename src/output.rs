@@ -9,7 +9,7 @@ use std::path::Path;
 use std::str::FromStr;
 
 use crate::database::Database;
-use crate::matcher::DuplicateGroup;
+use crate::matcher::{DuplicateFile, DuplicateGroup, MatchKind};
 use crate::tags;
 
 /// Output format for duplicate results.
@@ -52,6 +52,8 @@ struct JsonFile {
     path: String,
     duration_secs: f64,
     similarity: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    match_kind: Option<String>,
 }
 
 /// Detailed JSON output (with --details).
@@ -68,6 +70,8 @@ struct DetailedJsonFile {
     path: String,
     duration_secs: f64,
     similarity: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    match_kind: Option<String>,
     format: String,
     size_bytes: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -138,9 +142,10 @@ fn print_human(groups: &[DuplicateGroup]) {
         );
         for file in &group.files {
             let duration = format_duration(file.duration_secs);
+            let score_label = format_score_label(file);
             println!(
-                "  [{:.0}%] {} ({})",
-                file.score * 100.0,
+                "  {} {} ({})",
+                score_label,
                 file.path.display(),
                 duration,
             );
@@ -188,9 +193,10 @@ fn print_human_detailed(groups: &[DuplicateGroup], db: Option<&Database>) {
                 String::new()
             };
 
+            let score_label = format_score_label(file);
             println!(
-                "  [{:.0}%] {} ({}, {},{} {})",
-                file.score * 100.0,
+                "  {} {} ({}, {},{} {})",
+                score_label,
                 file.path.display(),
                 duration,
                 ext.to_uppercase(),
@@ -236,6 +242,7 @@ fn build_detailed_group(
                 path: f.path.to_string_lossy().into_owned(),
                 duration_secs: f.duration_secs,
                 similarity: f.score,
+                match_kind: match_kind_str(f.match_kind),
                 format: file_extension(&f.path),
                 size_bytes: file_size(&f.path),
                 sample_rate: audio_info.as_ref().and_then(|a| a.sample_rate),
@@ -305,6 +312,7 @@ fn print_json(groups: &[DuplicateGroup]) -> Result<()> {
                     path: f.path.to_string_lossy().into_owned(),
                     duration_secs: f.duration_secs,
                     similarity: f.score,
+                    match_kind: match_kind_str(f.match_kind),
                 })
                 .collect(),
         })
@@ -325,6 +333,7 @@ fn print_jsonl(groups: &[DuplicateGroup]) -> Result<()> {
                     path: f.path.to_string_lossy().into_owned(),
                     duration_secs: f.duration_secs,
                     similarity: f.score,
+                    match_kind: match_kind_str(f.match_kind),
                 })
                 .collect(),
         };
@@ -360,6 +369,22 @@ fn format_size(bytes: u64) -> String {
         format!("{:.0} KB", bytes as f64 / 1024.0)
     } else {
         format!("{} B", bytes)
+    }
+}
+
+fn format_score_label(file: &DuplicateFile) -> String {
+    match file.match_kind {
+        MatchKind::ExactCopy => "[100% exact copy]".to_string(),
+        MatchKind::SameAudio => "[100% same audio]".to_string(),
+        MatchKind::Similar => format!("[{:.0}%]", file.score * 100.0),
+    }
+}
+
+fn match_kind_str(kind: MatchKind) -> Option<String> {
+    match kind {
+        MatchKind::ExactCopy => Some("exact_copy".to_string()),
+        MatchKind::SameAudio => Some("same_audio".to_string()),
+        MatchKind::Similar => None,
     }
 }
 
@@ -411,11 +436,13 @@ mod tests {
                     path: PathBuf::from("/music/a.flac"),
                     duration_secs: 222.0,
                     score: 1.0,
+                    match_kind: crate::matcher::MatchKind::Similar,
                 },
                 DuplicateFile {
                     path: PathBuf::from("/music/b.mp3"),
                     duration_secs: 221.0,
                     score: 0.95,
+                    match_kind: crate::matcher::MatchKind::Similar,
                 },
             ],
         }];

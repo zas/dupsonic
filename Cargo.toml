@@ -49,6 +49,9 @@ globset = "0.4"
 # Regex for --keep strategy
 regex = "1.10"
 
+# File hashing (for exact-copy detection)
+sha2 = "0.10"
+
 # Cross-platform paths
 directories = "6.0"
 

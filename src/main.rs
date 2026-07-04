@@ -259,11 +259,14 @@ fn main() -> Result<()> {
             };
 
             // Filter out groups where MBIDs prove they're different recordings
-            let groups = if no_mbid_filter {
+            let mut groups = if no_mbid_filter {
                 groups
             } else {
                 matcher::filter_by_mbids(groups, &db)
             };
+
+            // Classify 100% fingerprint matches as exact copies or same-audio
+            matcher::classify_matches(&mut groups);
 
             if let Some(ref cmd) = exec {
                 let strategy: dupsonic::keep::KeepStrategy = keep.parse()?;
