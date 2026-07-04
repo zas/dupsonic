@@ -167,7 +167,11 @@ async function doAction(groupId, fileIndex, action) {
     if (r.ok) {
       showMsg(`${action}: ${result.path || ''}`, 'info');
       const el = document.getElementById(`file-${groupId.slice(0,8)}-${fileIndex}`);
-      if (el) el.style.opacity = '0.3';
+      if (el) {
+        el.style.opacity = '0.3';
+        el.style.pointerEvents = 'none';
+        el.querySelectorAll('button').forEach(b => b.disabled = true);
+      }
     } else {
       showMsg(result || 'Action failed', 'error');
     }
