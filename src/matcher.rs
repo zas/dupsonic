@@ -175,7 +175,7 @@ fn find_duplicates_from_db(
                         (Some(r), Some(f)) if path != &members[0] => {
                             compare_fingerprints(&r.fingerprint, &f.fingerprint)
                         }
-                        _ => 1.0,
+                        _ => 1.0, // placeholder for reference, fixed below
                     };
                     let duration = fp.map(|f| f.duration_secs).unwrap_or(0.0);
                     DuplicateFile {
@@ -186,6 +186,17 @@ fn find_duplicates_from_db(
                     }
                 })
                 .collect();
+            // Set reference file's score to the max similarity in the group
+            let max_other_score = files
+                .iter()
+                .filter(|f| f.path != members[0])
+                .map(|f| f.score)
+                .fold(0.0_f64, f64::max);
+            for file in &mut files {
+                if file.path == members[0] {
+                    file.score = max_other_score;
+                }
+            }
             files.sort_by(|a, b| a.path.cmp(&b.path));
             DuplicateGroup { files }
         })
@@ -270,7 +281,7 @@ fn find_duplicates_in_memory(
                 .iter()
                 .map(|&idx| {
                     let score = if idx == members[0] {
-                        1.0
+                        1.0 // placeholder, fixed below
                     } else {
                         compare_fingerprints(&all_fps[idx].fingerprint, reference_fp)
                     };
@@ -282,6 +293,17 @@ fn find_duplicates_in_memory(
                     }
                 })
                 .collect();
+            // Set reference file's score to the max similarity in the group
+            let max_other_score = files
+                .iter()
+                .filter(|f| f.path != all_fps[members[0]].path)
+                .map(|f| f.score)
+                .fold(0.0_f64, f64::max);
+            for file in &mut files {
+                if file.path == all_fps[members[0]].path {
+                    file.score = max_other_score;
+                }
+            }
             files.sort_by(|a, b| a.path.cmp(&b.path));
             DuplicateGroup { files }
         })
@@ -475,13 +497,17 @@ pub fn find_duplicates_for(
         return Ok(Vec::new());
     }
 
-    // Add the target file itself as the reference
+    // Add the target file itself with the max similarity score from the group
+    let max_score = matches
+        .iter()
+        .map(|f| f.score)
+        .fold(0.0_f64, f64::max);
     matches.insert(
         0,
         DuplicateFile {
             path: target,
             duration_secs: target_fp.duration_secs,
-            score: 1.0,
+            score: max_score,
             match_kind: MatchKind::Similar,
         },
     );
