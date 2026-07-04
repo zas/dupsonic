@@ -73,9 +73,7 @@ pub fn scan(
                 };
                 match cached.get(f) {
                     Some(&(size, mtime, fp_length)) => {
-                        let length_matches = fp_length
-                            .map(|l| l == length as i64)
-                            .unwrap_or(false);
+                        let length_matches = fp_length.map(|l| l == length as i64).unwrap_or(false);
                         // Re-process if size, mtime, or fingerprint length changed
                         !(meta.len() as i64 == size
                             && crate::database::file_mtime_secs(&meta) == mtime

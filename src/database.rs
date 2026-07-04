@@ -159,9 +159,7 @@ impl Database {
 
     /// Load all cached file metadata in one query for efficient batch filtering.
     /// Returns a map of path -> (size, mtime_secs, fingerprint_length).
-    pub fn load_cached_metadata(
-        &self,
-    ) -> Result<CachedMetadata> {
+    pub fn load_cached_metadata(&self) -> Result<CachedMetadata> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT path, size, mtime_secs, fingerprint_length FROM files WHERE fingerprint IS NOT NULL",
@@ -498,12 +496,7 @@ impl Database {
     }
 
     /// Store computed hashes for a file.
-    pub fn store_hashes(
-        &self,
-        path: &Path,
-        file_sha256: &str,
-        audio_sha256: &str,
-    ) -> Result<()> {
+    pub fn store_hashes(&self, path: &Path, file_sha256: &str, audio_sha256: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "UPDATE files SET file_sha256 = ?1, audio_sha256 = ?2 WHERE path = ?3",
@@ -514,9 +507,7 @@ impl Database {
 
     /// Load cached file and audio hashes for all fingerprinted files.
     /// Returns a map of path -> (file_sha256, audio_sha256).
-    pub fn load_hashes(
-        &self,
-    ) -> Result<CachedHashes> {
+    pub fn load_hashes(&self) -> Result<CachedHashes> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT path, file_sha256, audio_sha256 FROM files
@@ -942,9 +933,7 @@ mod tests {
         drop(conn);
 
         // Remove Podcasts entries
-        let removed = db
-            .clean_matching(&["**/Podcasts/**".to_string()])
-            .unwrap();
+        let removed = db.clean_matching(&["**/Podcasts/**".to_string()]).unwrap();
         assert_eq!(removed, 2);
 
         // Remove .mp3 files

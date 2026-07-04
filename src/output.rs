@@ -230,10 +230,7 @@ fn print_human_detailed(groups: &[DuplicateGroup], db: Option<&Database>) {
     );
 }
 
-fn build_detailed_group(
-    group: &DuplicateGroup,
-    db: Option<&Database>,
-) -> DetailedJsonGroup {
+fn build_detailed_group(group: &DuplicateGroup, db: Option<&Database>) -> DetailedJsonGroup {
     let files: Vec<DetailedJsonFile> = group
         .files
         .iter()
@@ -292,10 +289,8 @@ fn build_detailed_group(
 }
 
 fn print_json_detailed(groups: &[DuplicateGroup], db: Option<&Database>) -> Result<()> {
-    let json_groups: Vec<DetailedJsonGroup> = groups
-        .iter()
-        .map(|g| build_detailed_group(g, db))
-        .collect();
+    let json_groups: Vec<DetailedJsonGroup> =
+        groups.iter().map(|g| build_detailed_group(g, db)).collect();
 
     println!("{}", serde_json::to_string_pretty(&json_groups)?);
     Ok(())

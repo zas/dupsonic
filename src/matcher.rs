@@ -184,9 +184,7 @@ fn find_duplicates_from_db(
                     }
                 })
                 .collect();
-            files.sort_by(|a, b| {
-                crate::keep::quality_score(b).cmp(&crate::keep::quality_score(a))
-            });
+            files.sort_by_key(|f| std::cmp::Reverse(crate::keep::quality_score(f)));
             DuplicateGroup {
                 id: compute_group_id(&files),
                 files,
@@ -271,10 +269,7 @@ pub fn classify_matches(groups: &mut [DuplicateGroup], db: &Database) {
                 let file_hash = crate::hash::file_sha256(path).unwrap_or_default();
                 let audio_hash = crate::hash::audio_sha256(path).unwrap_or_default();
                 let _ = db.store_hashes(path, &file_hash, &audio_hash);
-                hashes.insert(
-                    path.clone(),
-                    (Some(file_hash), Some(audio_hash)),
-                );
+                hashes.insert(path.clone(), (Some(file_hash), Some(audio_hash)));
             }
         }
 
@@ -301,8 +296,8 @@ pub fn classify_matches(groups: &mut [DuplicateGroup], db: &Database) {
             .collect();
 
         // Classify: check file hash first, then audio hash
-        let all_same_file = !file_hashes[0].is_empty()
-            && file_hashes.iter().all(|h| *h == file_hashes[0]);
+        let all_same_file =
+            !file_hashes[0].is_empty() && file_hashes.iter().all(|h| *h == file_hashes[0]);
 
         if all_same_file {
             for &idx in &perfect_indices {
@@ -327,8 +322,8 @@ pub fn classify_matches(groups: &mut [DuplicateGroup], db: &Database) {
         }
 
         // For remaining unclassified files, check audio hash
-        let all_same_audio = !audio_hashes[0].is_empty()
-            && audio_hashes.iter().all(|h| *h == audio_hashes[0]);
+        let all_same_audio =
+            !audio_hashes[0].is_empty() && audio_hashes.iter().all(|h| *h == audio_hashes[0]);
 
         if all_same_audio {
             for &idx in &perfect_indices {

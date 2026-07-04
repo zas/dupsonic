@@ -268,10 +268,7 @@ fn test_duplicate_classification_5_files() {
     // Find group(s) containing 100% matches (lowres, retagged, exact_copy)
     let perfect_groups: Vec<_> = groups.iter().filter(|g| g.similarity >= 1.0).collect();
     if !perfect_groups.is_empty() {
-        let perfect_files: Vec<_> = perfect_groups
-            .iter()
-            .flat_map(|g| g.files.iter())
-            .collect();
+        let perfect_files: Vec<_> = perfect_groups.iter().flat_map(|g| g.files.iter()).collect();
 
         // exact_copy must be ExactCopy (byte-identical to lowres)
         if let Some(f) = perfect_files.iter().find(|f| f.path == exact_copy) {
