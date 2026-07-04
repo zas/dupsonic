@@ -264,7 +264,43 @@ impl Database {
 
         let count = stale_ids.len();
         for id in &stale_ids {
+            conn.execute("DELETE FROM band_hashes WHERE file_id = ?1", params![id])?;
             conn.execute("DELETE FROM files WHERE id = ?1", params![id])?;
+        }
+
+        Ok(count)
+    }
+
+    /// Remove entries whose paths match any of the given gitignore-style patterns.
+    pub fn clean_matching(&self, patterns: &[String]) -> Result<usize> {
+        use globset::{Glob, GlobSetBuilder};
+
+        let mut builder = GlobSetBuilder::new();
+        for pattern in patterns {
+            let glob = Glob::new(pattern)
+                .or_else(|_| Glob::new(&format!("**/{}", pattern)))
+                .map_err(|e| anyhow::anyhow!("Invalid pattern '{}': {}", pattern, e))?;
+            builder.add(glob);
+        }
+        let set = builder.build()?;
+
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT id, path FROM files")?;
+        let matching_ids: Vec<i64> = stmt
+            .query_map([], |row| {
+                let id: i64 = row.get(0)?;
+                let path: String = row.get(1)?;
+                Ok((id, path))
+            })?
+            .filter_map(|r| r.ok())
+            .filter(|(_, p)| set.is_match(p))
+            .map(|(id, _)| id)
+            .collect();
+
+        let count = matching_ids.len();
+        for id in &matching_ids {
+            conn.execute("DELETE FROM files WHERE id = ?1", params![id])?;
+            conn.execute("DELETE FROM band_hashes WHERE file_id = ?1", params![id])?;
         }
 
         Ok(count)
@@ -667,5 +703,50 @@ mod tests {
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].fingerprint, vec![0x22222222]);
         assert_eq!(loaded[0].duration_secs, 120.0);
+    }
+
+    #[test]
+    fn test_clean_matching() {
+        let (db, _dir) = temp_db();
+
+        // Insert entries with specific paths directly into the DB
+        let conn = db.conn.lock().unwrap();
+        let paths = [
+            "/home/user/Music/Artist/album/track.flac",
+            "/home/user/Music/Podcasts/episode1.mp3",
+            "/home/user/Music/Podcasts/episode2.mp3",
+            "/home/user/Music/Artist/single.mp3",
+            "/home/user/Music/Audiobooks/chapter1.m4a",
+        ];
+        for path in &paths {
+            conn.execute(
+                "INSERT INTO files (path, size, mtime_secs, duration_secs, fingerprint)
+                 VALUES (?1, 1000, 0, 180.0, X'DEADBEEF')",
+                params![path],
+            )
+            .unwrap();
+        }
+        drop(conn);
+
+        // Remove Podcasts entries
+        let removed = db
+            .clean_matching(&["**/Podcasts/**".to_string()])
+            .unwrap();
+        assert_eq!(removed, 2);
+
+        // Remove .mp3 files
+        let removed = db.clean_matching(&["*.mp3".to_string()]).unwrap();
+        assert_eq!(removed, 1); // only single.mp3 left after Podcasts removal
+
+        // Remaining: track.flac and chapter1.m4a
+        let remaining = db.load_all_fingerprints().unwrap();
+        assert_eq!(remaining.len(), 2);
+
+        // Remove with multiple patterns
+        let removed = db
+            .clean_matching(&["*.flac".to_string(), "**/Audiobooks/**".to_string()])
+            .unwrap();
+        assert_eq!(removed, 2);
+        assert_eq!(db.load_all_fingerprints().unwrap().len(), 0);
     }
 }

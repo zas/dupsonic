@@ -96,8 +96,12 @@ enum Commands {
     /// Show scan status and database statistics
     Status,
 
-    /// Remove entries for files that no longer exist
-    CleanCache,
+    /// Remove entries for files that no longer exist, or matching patterns
+    CleanCache {
+        /// Gitignore-style patterns to match paths to remove (e.g. "**/Podcasts/**")
+        #[arg()]
+        patterns: Vec<String>,
+    },
 
     /// Identify recordings via MusicBrainz tags and AcoustID lookup
     Identify {
@@ -277,9 +281,14 @@ fn main() -> Result<()> {
             println!("  Failed: {}", stats.failed);
             println!("  Stale (file missing): {}", stats.stale);
         }
-        Commands::CleanCache => {
-            let removed = db.clean_stale()?;
-            println!("Removed {} stale entries", removed);
+        Commands::CleanCache { patterns } => {
+            if patterns.is_empty() {
+                let removed = db.clean_stale()?;
+                println!("Removed {} stale entries", removed);
+            } else {
+                let removed = db.clean_matching(&patterns)?;
+                println!("Removed {} entries matching patterns", removed);
+            }
         }
         Commands::Identify {
             api_key,
