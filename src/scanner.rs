@@ -2,7 +2,9 @@
 //!
 //! Discovers audio files by extension, respects `.dupsonic-ignore` files and
 //! `--ignore` patterns, and fingerprints files in parallel using Rayon.
-//! Only new or modified files are processed (change detection via size + mtime).
+//! Results are sent through a channel to a writer thread that batches DB writes
+//! in transactions. Only new or modified files are processed (change detection
+//! via size + mtime).
 
 use anyhow::Result;
 use globset::{Glob, GlobSet, GlobSetBuilder};
@@ -13,7 +15,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing::{debug, info, warn};
 use walkdir::WalkDir;
 
-use crate::database::Database;
+use crate::database::{Database, FileMeta, ScanResult};
 use crate::fingerprint;
 
 /// Audio file extensions we support (via symphonia).
@@ -94,47 +96,106 @@ pub fn scan(
             .progress_chars("█▓░"),
     );
 
-    let success_count = AtomicUsize::new(0);
-    let error_count = AtomicUsize::new(0);
+    // Channel for sending fingerprint results from workers to the DB writer
+    let (tx, rx) = std::sync::mpsc::sync_channel::<ScanResult>(jobs * 4);
 
-    let pool = rayon::ThreadPoolBuilder::new().num_threads(jobs).build()?;
+    // DB writer thread: batches results into transactions
+    let batch_size = 64;
+    let db_success = AtomicUsize::new(0);
+    let db_error = AtomicUsize::new(0);
 
-    pool.install(|| {
-        to_process.par_iter().for_each(|path| {
-            let result = fingerprint::fingerprint_file(path, length);
-            match result {
-                Ok(fp_result) => {
-                    if let Err(e) = db.store_fingerprint(path, &fp_result, length) {
-                        warn!("Failed to store fingerprint for {}: {}", path.display(), e);
-                        error_count.fetch_add(1, Ordering::Relaxed);
-                    } else {
-                        // Pre-compute and store band hashes for DB-based candidate generation
-                        let hashes = crate::matcher::compute_band_hashes(&fp_result.fingerprint);
-                        let _ = db.store_band_hashes(path, &hashes);
-                        success_count.fetch_add(1, Ordering::Relaxed);
-                        debug!("Fingerprinted: {}", path.display());
-                    }
+    std::thread::scope(|scope| {
+        // Writer thread
+        let writer = scope.spawn(|| {
+            let mut batch: Vec<ScanResult> = Vec::with_capacity(batch_size);
+            let mut successes = 0usize;
+            let mut errors = 0usize;
+
+            for result in rx {
+                match &result {
+                    ScanResult::Success { .. } => successes += 1,
+                    ScanResult::Error { .. } => errors += 1,
                 }
-                Err(e) => {
-                    debug!("Failed to fingerprint {}: {}", path.display(), e);
-                    if let Err(store_err) = db.store_error(path, &e.to_string()) {
-                        warn!(
-                            "Failed to store error for {}: {}",
-                            path.display(),
-                            store_err
-                        );
+                batch.push(result);
+
+                if batch.len() >= batch_size {
+                    if let Err(e) = db.store_batch(&batch) {
+                        warn!("Failed to store batch: {}", e);
                     }
-                    error_count.fetch_add(1, Ordering::Relaxed);
+                    batch.clear();
                 }
             }
-            pb.inc(1);
+
+            // Flush remaining
+            if !batch.is_empty() {
+                if let Err(e) = db.store_batch(&batch) {
+                    warn!("Failed to store final batch: {}", e);
+                }
+            }
+
+            (successes, errors)
         });
+
+        // Fingerprint workers
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(jobs)
+            .build()
+            .expect("failed to build thread pool");
+
+        pool.install(|| {
+            to_process.par_iter().for_each(|path| {
+                let scan_result = match fingerprint::fingerprint_file(path, length) {
+                    Ok(fp_result) => {
+                        let band_hashes =
+                            crate::matcher::compute_band_hashes(&fp_result.fingerprint);
+                        let meta = FileMeta::from_path(path);
+                        match meta {
+                            Some(meta) => {
+                                debug!("Fingerprinted: {}", path.display());
+                                ScanResult::Success {
+                                    path: path.clone(),
+                                    meta,
+                                    duration_secs: fp_result.duration_secs,
+                                    fingerprint: fp_result.fingerprint,
+                                    fingerprint_length: length,
+                                    band_hashes,
+                                }
+                            }
+                            None => ScanResult::Error {
+                                path: path.clone(),
+                                meta: None,
+                                error: "failed to read file metadata".to_string(),
+                            },
+                        }
+                    }
+                    Err(e) => {
+                        debug!("Failed to fingerprint {}: {}", path.display(), e);
+                        ScanResult::Error {
+                            path: path.clone(),
+                            meta: FileMeta::from_path(path),
+                            error: e.to_string(),
+                        }
+                    }
+                };
+
+                let _ = tx.send(scan_result);
+                pb.inc(1);
+            });
+        });
+
+        // Close the channel so the writer finishes
+        drop(tx);
+
+        // Wait for writer and get counts
+        let (successes, errors) = writer.join().unwrap();
+        db_success.store(successes, Ordering::Relaxed);
+        db_error.store(errors, Ordering::Relaxed);
     });
 
     pb.finish_with_message("done");
 
-    let successes = success_count.load(Ordering::Relaxed);
-    let errors = error_count.load(Ordering::Relaxed);
+    let successes = db_success.load(Ordering::Relaxed);
+    let errors = db_error.load(Ordering::Relaxed);
     if !quiet {
         println!("Finished: {} fingerprinted, {} errors", successes, errors);
     }

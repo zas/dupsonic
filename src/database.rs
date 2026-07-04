@@ -540,6 +540,130 @@ fn file_mtime_secs(meta: &std::fs::Metadata) -> i64 {
         .unwrap_or(0)
 }
 
+/// Metadata captured from the filesystem at scan time, to be stored alongside the fingerprint.
+#[derive(Debug, Clone)]
+pub struct FileMeta {
+    /// File size in bytes.
+    pub size: i64,
+    /// File modification time as seconds since UNIX epoch.
+    pub mtime_secs: i64,
+}
+
+impl FileMeta {
+    /// Capture metadata for a file.
+    pub fn from_path(path: &Path) -> Option<Self> {
+        std::fs::metadata(path).ok().map(|meta| Self {
+            size: meta.len() as i64,
+            mtime_secs: file_mtime_secs(&meta),
+        })
+    }
+}
+
+/// A scan result ready to be stored in the database.
+#[derive(Debug)]
+pub enum ScanResult {
+    /// Successful fingerprint with file metadata and band hashes.
+    Success {
+        /// Absolute path to the audio file.
+        path: PathBuf,
+        /// File metadata (size, mtime) at scan time.
+        meta: FileMeta,
+        /// Full duration of the audio in seconds.
+        duration_secs: f64,
+        /// Chromaprint sub-fingerprint array.
+        fingerprint: Vec<u32>,
+        /// Duration in seconds used for fingerprinting.
+        fingerprint_length: u64,
+        /// Pre-computed LSH band hashes.
+        band_hashes: Vec<u64>,
+    },
+    /// Fingerprinting failed for a file.
+    Error {
+        /// Absolute path to the audio file.
+        path: PathBuf,
+        /// File metadata if available (may be None if file disappeared).
+        meta: Option<FileMeta>,
+        /// Error message describing the failure.
+        error: String,
+    },
+}
+
+impl Database {
+    /// Store a batch of scan results in a single transaction.
+    pub fn store_batch(&self, results: &[ScanResult]) -> Result<()> {
+        if results.is_empty() {
+            return Ok(());
+        }
+
+        let conn = self.conn.lock().unwrap();
+        conn.execute_batch("BEGIN")?;
+
+        let mut fp_stmt = conn.prepare_cached(
+            "INSERT OR REPLACE INTO files (path, size, mtime_secs, duration_secs, fingerprint, fingerprint_length, error)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL)",
+        )?;
+        let mut err_stmt = conn.prepare_cached(
+            "INSERT OR REPLACE INTO files (path, size, mtime_secs, duration_secs, fingerprint, error)
+             VALUES (?1, ?2, ?3, NULL, NULL, ?4)",
+        )?;
+        let mut band_del_stmt =
+            conn.prepare_cached("DELETE FROM band_hashes WHERE file_id = ?1")?;
+        let mut band_ins_stmt = conn.prepare_cached(
+            "INSERT INTO band_hashes (file_id, band_idx, hash) VALUES (?1, ?2, ?3)",
+        )?;
+
+        for result in results {
+            match result {
+                ScanResult::Success {
+                    path,
+                    meta,
+                    duration_secs,
+                    fingerprint,
+                    fingerprint_length,
+                    band_hashes,
+                } => {
+                    let fp_bytes = fingerprint_to_bytes(fingerprint);
+                    fp_stmt.execute(params![
+                        path.to_string_lossy().as_ref(),
+                        meta.size,
+                        meta.mtime_secs,
+                        duration_secs,
+                        fp_bytes,
+                        *fingerprint_length as i64,
+                    ])?;
+
+                    // Get the file_id for band hashes
+                    let file_id: i64 = conn.query_row(
+                        "SELECT id FROM files WHERE path = ?1",
+                        params![path.to_string_lossy().as_ref()],
+                        |row| row.get(0),
+                    )?;
+
+                    band_del_stmt.execute(params![file_id])?;
+                    for (idx, &hash) in band_hashes.iter().enumerate() {
+                        band_ins_stmt.execute(params![file_id, idx as i64, hash as i64])?;
+                    }
+                }
+                ScanResult::Error { path, meta, error } => {
+                    let (size, mtime) = meta
+                        .as_ref()
+                        .map(|m| (m.size, m.mtime_secs))
+                        .unwrap_or((0, 0));
+                    err_stmt.execute(params![
+                        path.to_string_lossy().as_ref(),
+                        size,
+                        mtime,
+                        error,
+                    ])?;
+                }
+            }
+        }
+
+        conn.execute_batch("COMMIT")?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
