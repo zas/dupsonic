@@ -458,14 +458,6 @@ impl Database {
         Ok(results)
     }
 
-    /// Check if band hashes are populated for the collection.
-    pub fn has_band_hashes(&self) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
-        let count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM band_hashes", [], |row| row.get(0))?;
-        Ok(count > 0)
-    }
-
     /// Load fingerprint for a specific file path.
     pub fn load_fingerprint(&self, path: &Path) -> Result<Option<FileFingerprint>> {
         let conn = self.conn.lock().unwrap();

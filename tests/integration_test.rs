@@ -9,7 +9,7 @@ use tempfile::TempDir;
 
 use dupsonic::database::Database;
 use dupsonic::fingerprint::{compare_fingerprints, durations_compatible, fingerprint_file};
-use dupsonic::matcher::find_duplicates;
+use dupsonic::matcher::{compute_band_hashes, find_duplicates};
 
 /// Generate a WAV file containing a sine wave.
 ///
@@ -257,6 +257,8 @@ fn test_full_pipeline_finds_duplicates() {
     for path in [&dup1, &dup2, &dup3, &diff] {
         let result = fingerprint_file(path, 120).unwrap();
         db.store_fingerprint(path, &result, 120).unwrap();
+        let hashes = compute_band_hashes(&result.fingerprint);
+        db.store_band_hashes(path, &hashes).unwrap();
     }
 
     // Find duplicates
@@ -300,6 +302,8 @@ fn test_pipeline_respects_duration_filter() {
     for path in [&short, &long] {
         let result = fingerprint_file(path, 120).unwrap();
         db.store_fingerprint(path, &result, 120).unwrap();
+        let hashes = compute_band_hashes(&result.fingerprint);
+        db.store_band_hashes(path, &hashes).unwrap();
     }
 
     let groups = find_duplicates(&db, 0.8, false).unwrap();
@@ -330,6 +334,8 @@ fn test_pipeline_single_file() {
     generate_wav(440.0, 15.0, 44100, &wav);
     let result = fingerprint_file(&wav, 120).unwrap();
     db.store_fingerprint(&wav, &result, 120).unwrap();
+    let hashes = compute_band_hashes(&result.fingerprint);
+    db.store_band_hashes(&wav, &hashes).unwrap();
 
     let groups = find_duplicates(&db, 0.8, false).unwrap();
     assert_eq!(groups.len(), 0, "Single file can't be a duplicate");
