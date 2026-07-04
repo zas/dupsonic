@@ -255,18 +255,47 @@ fn main() -> Result<()> {
             let paths = if paths.is_empty() {
                 let stored = db.load_scan_paths()?;
                 if stored.is_empty() {
-                    eprintln!("No paths specified and no previously scanned paths found.");
-                    eprintln!();
-                    eprintln!("Usage: dupsonic scan <path-to-music>");
-                    std::process::exit(1);
-                }
-                if !cli.quiet {
-                    eprintln!("Re-scanning {} stored path(s):", stored.len());
-                    for p in &stored {
-                        eprintln!("  {}", p.display());
+                    // Fall back to platform-specific music directory
+                    if let Some(music_dir) = directories::UserDirs::new()
+                        .and_then(|u| u.audio_dir().map(|p| p.to_path_buf()))
+                    {
+                        if music_dir.exists() {
+                            eprintln!(
+                                "No stored paths. Found default music directory: {}",
+                                music_dir.display()
+                            );
+                            eprint!("Scan it? [Y/n] ");
+                            let mut answer = String::new();
+                            std::io::stdin().read_line(&mut answer).ok();
+                            let answer = answer.trim().to_lowercase();
+                            if answer.is_empty() || answer == "y" || answer == "yes" {
+                                vec![music_dir]
+                            } else {
+                                std::process::exit(0);
+                            }
+                        } else {
+                            eprintln!(
+                                "No paths specified and default music directory does not exist."
+                            );
+                            eprintln!();
+                            eprintln!("Usage: dupsonic scan <path-to-music>");
+                            std::process::exit(1);
+                        }
+                    } else {
+                        eprintln!("No paths specified and no previously scanned paths found.");
+                        eprintln!();
+                        eprintln!("Usage: dupsonic scan <path-to-music>");
+                        std::process::exit(1);
                     }
+                } else {
+                    if !cli.quiet {
+                        eprintln!("Re-scanning {} stored path(s):", stored.len());
+                        for p in &stored {
+                            eprintln!("  {}", p.display());
+                        }
+                    }
+                    stored
                 }
-                stored
             } else {
                 paths
             };
