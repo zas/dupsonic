@@ -263,9 +263,13 @@ impl Database {
             .collect();
 
         let count = stale_ids.len();
-        for id in &stale_ids {
-            conn.execute("DELETE FROM band_hashes WHERE file_id = ?1", params![id])?;
-            conn.execute("DELETE FROM files WHERE id = ?1", params![id])?;
+        if count > 0 {
+            conn.execute_batch("BEGIN")?;
+            for id in &stale_ids {
+                conn.execute("DELETE FROM band_hashes WHERE file_id = ?1", params![id])?;
+                conn.execute("DELETE FROM files WHERE id = ?1", params![id])?;
+            }
+            conn.execute_batch("COMMIT")?;
         }
 
         Ok(count)
@@ -298,9 +302,13 @@ impl Database {
             .collect();
 
         let count = matching_ids.len();
-        for id in &matching_ids {
-            conn.execute("DELETE FROM files WHERE id = ?1", params![id])?;
-            conn.execute("DELETE FROM band_hashes WHERE file_id = ?1", params![id])?;
+        if count > 0 {
+            conn.execute_batch("BEGIN")?;
+            for id in &matching_ids {
+                conn.execute("DELETE FROM band_hashes WHERE file_id = ?1", params![id])?;
+                conn.execute("DELETE FROM files WHERE id = ?1", params![id])?;
+            }
+            conn.execute_batch("COMMIT")?;
         }
 
         Ok(count)
@@ -389,6 +397,8 @@ impl Database {
             None => return Ok(()), // File not in DB yet
         };
 
+        conn.execute_batch("BEGIN")?;
+
         // Delete old hashes
         conn.execute(
             "DELETE FROM band_hashes WHERE file_id = ?1",
@@ -401,6 +411,8 @@ impl Database {
         for (idx, &hash) in band_hashes.iter().enumerate() {
             stmt.execute(params![file_id, idx as i64, hash as i64])?;
         }
+
+        conn.execute_batch("COMMIT")?;
 
         Ok(())
     }
