@@ -157,6 +157,13 @@ enum Commands {
         #[arg(value_enum)]
         shell: clap_complete::Shell,
     },
+
+    /// Start web UI server
+    Serve {
+        /// Address to bind to
+        #[arg(short, long, default_value = "0.0.0.0:8080")]
+        bind: String,
+    },
 }
 
 fn num_cpus() -> usize {
@@ -339,6 +346,10 @@ fn main() -> Result<()> {
             let mut cmd = Cli::command();
             clap_complete::generate(shell, &mut cmd, "dupsonic", &mut std::io::stdout());
             return Ok(());
+        }
+        Commands::Serve { bind } => {
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(dupsonic::web::serve(db, db_path, &bind))?;
         }
     }
 

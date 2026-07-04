@@ -1,0 +1,325 @@
+//! Minimal web UI for dupsonic.
+//!
+//! Provides a single-page web interface for scanning, viewing duplicates,
+//! and acting on them. Designed for headless servers (NAS, Raspberry Pi).
+
+use axum::extract::{Query, State};
+use axum::http::{header, StatusCode};
+use axum::response::{Html, IntoResponse, Json};
+use axum::routing::{get, post};
+use axum::Router;
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+
+use crate::database::Database;
+use crate::matcher::{self, DuplicateGroup, MatchKind};
+
+/// Shared application state.
+struct AppState {
+    db: Database,
+    db_path: PathBuf,
+    /// Current scan status.
+    scan_status: Mutex<ScanStatus>,
+    /// Cached duplicate groups from last find-dupes run.
+    dupes: Mutex<Vec<DuplicateGroup>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ScanStatus {
+    scanning: bool,
+    message: String,
+}
+
+impl Default for ScanStatus {
+    fn default() -> Self {
+        Self {
+            scanning: false,
+            message: "Idle".to_string(),
+        }
+    }
+}
+
+/// Start the web server.
+pub async fn serve(db: Database, db_path: PathBuf, bind: &str) -> anyhow::Result<()> {
+    let state = Arc::new(AppState {
+        db,
+        db_path,
+        scan_status: Mutex::new(ScanStatus::default()),
+        dupes: Mutex::new(Vec::new()),
+    });
+
+    let app = Router::new()
+        .route("/", get(index_html))
+        .route("/api/status", get(api_status))
+        .route("/api/scan", post(api_scan))
+        .route("/api/dupes", get(api_dupes))
+        .route("/api/action", post(api_action))
+        .with_state(state);
+
+    let listener = tokio::net::TcpListener::bind(bind).await?;
+    eprintln!("Web UI available at http://{}", bind);
+    eprintln!("Press Ctrl+C to stop.");
+
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+
+    Ok(())
+}
+
+async fn shutdown_signal() {
+    tokio::signal::ctrl_c()
+        .await
+        .expect("failed to install signal handler");
+    eprintln!("\nShutting down.");
+}
+
+// --- API Endpoints ---
+
+async fn api_status(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let stats = state.db.stats().unwrap_or(crate::database::Stats {
+        total_files: 0,
+        fingerprinted: 0,
+        failed: 0,
+        stale: 0,
+    });
+    let scan_status = state.scan_status.lock().unwrap().clone();
+    let dupes_count = state.dupes.lock().unwrap().len();
+
+    Json(serde_json::json!({
+        "database": state.db_path.to_string_lossy(),
+        "total_files": stats.total_files,
+        "fingerprinted": stats.fingerprinted,
+        "failed": stats.failed,
+        "scanning": scan_status.scanning,
+        "scan_message": scan_status.message,
+        "duplicate_groups": dupes_count,
+    }))
+}
+
+#[derive(Deserialize)]
+struct ScanRequest {
+    paths: Vec<String>,
+    #[serde(default = "default_jobs")]
+    jobs: usize,
+    #[serde(default = "default_length")]
+    length: u64,
+    #[serde(default)]
+    force: bool,
+}
+
+fn default_jobs() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+}
+
+fn default_length() -> u64 {
+    120
+}
+
+async fn api_scan(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ScanRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    // Check if already scanning
+    {
+        let status = state.scan_status.lock().unwrap();
+        if status.scanning {
+            return Err((StatusCode::CONFLICT, "Scan already in progress".to_string()));
+        }
+    }
+
+    let paths: Vec<PathBuf> = req.paths.iter().map(PathBuf::from).collect();
+
+    // Validate paths
+    for path in &paths {
+        if !path.exists() {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("Path does not exist: {}", path.display()),
+            ));
+        }
+    }
+
+    // Start scan in background thread
+    let state_clone = state.clone();
+    let length = req.length;
+    let jobs = req.jobs;
+    let force = req.force;
+
+    std::thread::spawn(move || {
+        {
+            let mut status = state_clone.scan_status.lock().unwrap();
+            status.scanning = true;
+            status.message = format!("Scanning {} path(s)...", paths.len());
+        }
+
+        let result = crate::scanner::scan(&state_clone.db, &paths, jobs, length, &[], force, true);
+
+        {
+            let mut status = state_clone.scan_status.lock().unwrap();
+            status.scanning = false;
+            match result {
+                Ok(()) => status.message = "Scan complete".to_string(),
+                Err(e) => status.message = format!("Scan failed: {}", e),
+            }
+        }
+    });
+
+    Ok(Json(serde_json::json!({ "status": "scan_started" })))
+}
+
+#[derive(Deserialize)]
+struct DupesQuery {
+    #[serde(default = "default_threshold")]
+    threshold: f64,
+}
+
+fn default_threshold() -> f64 {
+    0.8
+}
+
+async fn api_dupes(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<DupesQuery>,
+) -> Json<serde_json::Value> {
+    let mut groups =
+        matcher::find_duplicates(&state.db, query.threshold, false).unwrap_or_default();
+
+    // Filter by MBIDs
+    groups = matcher::filter_by_mbids(groups, &state.db);
+
+    // Classify 100% matches
+    matcher::classify_matches(&mut groups, &state.db);
+
+    // Build response
+    let response: Vec<serde_json::Value> = groups
+        .iter()
+        .map(|g| {
+            serde_json::json!({
+                "id": g.id,
+                "similarity": g.similarity,
+                "files": g.files.iter().map(|f| {
+                    let mut file = serde_json::json!({
+                        "path": f.path.to_string_lossy(),
+                        "duration_secs": f.duration_secs,
+                    });
+                    match f.match_kind {
+                        MatchKind::ExactCopy => { file["match_kind"] = "exact_copy".into(); }
+                        MatchKind::SameAudio => { file["match_kind"] = "same_audio".into(); }
+                        MatchKind::Similar => {}
+                    }
+                    file
+                }).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+
+    // Cache for actions
+    *state.dupes.lock().unwrap() = groups;
+
+    Json(serde_json::json!(response))
+}
+
+#[derive(Deserialize)]
+struct ActionRequest {
+    group_id: String,
+    action: String,
+    /// Index of file to act on (0-based, within the group)
+    file_index: usize,
+}
+
+async fn api_action(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ActionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let dupes = state.dupes.lock().unwrap();
+    let group = dupes.iter().find(|g| g.id == req.group_id).ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            format!("Group {} not found", req.group_id),
+        )
+    })?;
+
+    if req.file_index >= group.files.len() {
+        return Err((StatusCode::BAD_REQUEST, "Invalid file index".to_string()));
+    }
+
+    let file_path = &group.files[req.file_index].path;
+
+    match req.action.as_str() {
+        "delete" => {
+            if !file_path.exists() {
+                return Err((
+                    StatusCode::NOT_FOUND,
+                    format!("File not found: {}", file_path.display()),
+                ));
+            }
+            std::fs::remove_file(file_path).map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to delete: {}", e),
+                )
+            })?;
+            Ok(Json(serde_json::json!({
+                "status": "deleted",
+                "path": file_path.to_string_lossy(),
+            })))
+        }
+        "trash" => {
+            // Move to a .dupsonic-trash directory next to the file
+            let trash_dir = file_path
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .join(".dupsonic-trash");
+            std::fs::create_dir_all(&trash_dir).map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to create trash dir: {}", e),
+                )
+            })?;
+            let dest = trash_dir.join(file_path.file_name().unwrap_or_default());
+            std::fs::rename(file_path, &dest).map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to move to trash: {}", e),
+                )
+            })?;
+            Ok(Json(serde_json::json!({
+                "status": "trashed",
+                "path": file_path.to_string_lossy(),
+                "destination": dest.to_string_lossy(),
+            })))
+        }
+        "exclude" => {
+            state.db.exclude_file(file_path).map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to exclude: {}", e),
+                )
+            })?;
+            Ok(Json(serde_json::json!({
+                "status": "excluded",
+                "path": file_path.to_string_lossy(),
+            })))
+        }
+        _ => Err((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "Unknown action: {}. Use: delete, trash, exclude",
+                req.action
+            ),
+        )),
+    }
+}
+
+// --- Static HTML ---
+
+async fn index_html() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        Html(include_str!("web_ui.html")),
+    )
+}

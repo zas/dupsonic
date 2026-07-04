@@ -49,3 +49,5 @@ pub mod output;
 pub mod scanner;
 /// Read metadata tags and audio format info from files.
 pub mod tags;
+/// Minimal web UI server.
+pub mod web;

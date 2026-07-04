@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dupsonic</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: system-ui, -apple-system, sans-serif; background: #1a1a2e; color: #e0e0e0; padding: 1rem; max-width: 1200px; margin: 0 auto; }
+h1 { color: #7c83fd; margin-bottom: 0.5rem; font-size: 1.5rem; }
+h2 { color: #c0c0c0; font-size: 1.1rem; margin: 1.5rem 0 0.5rem; }
+.status-bar { background: #16213e; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; display: flex; gap: 2rem; flex-wrap: wrap; align-items: center; }
+.status-bar .stat { text-align: center; }
+.status-bar .stat .value { font-size: 1.5rem; font-weight: bold; color: #7c83fd; }
+.status-bar .stat .label { font-size: 0.75rem; color: #888; text-transform: uppercase; }
+.controls { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
+input[type="text"] { background: #16213e; border: 1px solid #333; border-radius: 4px; padding: 0.5rem 0.75rem; color: #e0e0e0; flex: 1; min-width: 200px; }
+button { background: #7c83fd; color: white; border: none; border-radius: 4px; padding: 0.5rem 1rem; cursor: pointer; font-weight: 500; }
+button:hover { background: #6c73ed; }
+button:disabled { background: #444; cursor: not-allowed; }
+button.danger { background: #e74c3c; }
+button.danger:hover { background: #c0392b; }
+button.secondary { background: #444; }
+button.secondary:hover { background: #555; }
+.group { background: #16213e; border-radius: 8px; margin-bottom: 0.75rem; overflow: hidden; }
+.group-header { padding: 0.75rem 1rem; background: #1a2744; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+.group-header:hover { background: #1e2f52; }
+.group-id { font-family: monospace; color: #888; font-size: 0.8rem; }
+.group-similarity { color: #7c83fd; font-weight: bold; }
+.group-files { padding: 0 1rem 0.75rem; }
+.file { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0; border-top: 1px solid #222; gap: 0.5rem; }
+.file:first-child { border-top: none; }
+.file-info { flex: 1; min-width: 0; }
+.file-path { font-family: monospace; font-size: 0.85rem; word-break: break-all; }
+.file-meta { font-size: 0.75rem; color: #888; }
+.file-badge { font-size: 0.7rem; padding: 0.15rem 0.4rem; border-radius: 3px; font-weight: 500; white-space: nowrap; }
+.badge-exact { background: #2ecc40; color: #000; }
+.badge-same-audio { background: #ff851b; color: #000; }
+.badge-best { background: #7c83fd; color: #fff; }
+.file-actions { display: flex; gap: 0.25rem; }
+.file-actions button { padding: 0.25rem 0.5rem; font-size: 0.75rem; }
+.message { padding: 0.75rem; border-radius: 4px; margin-bottom: 0.5rem; }
+.message.info { background: #1a3a5c; }
+.message.error { background: #5c1a1a; }
+.spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #444; border-top-color: #7c83fd; border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+#dupes-list:empty::after { content: "No duplicates loaded. Click 'Find Dupes' to scan."; color: #666; display: block; padding: 2rem; text-align: center; }
+</style>
+</head>
+<body>
+<h1>🎵 dupsonic</h1>
+
+<div class="status-bar" id="status-bar">
+  <div class="stat"><div class="value" id="stat-files">-</div><div class="label">Files</div></div>
+  <div class="stat"><div class="value" id="stat-dupes">-</div><div class="label">Groups</div></div>
+  <div class="stat"><div class="value" id="stat-status">-</div><div class="label">Status</div></div>
+</div>
+
+<div class="controls">
+  <input type="text" id="scan-path" placeholder="Path to scan (e.g. /srv/music)" value="">
+  <button onclick="startScan()" id="btn-scan">Scan</button>
+  <button onclick="findDupes()" id="btn-dupes">Find Dupes</button>
+</div>
+
+<div id="messages"></div>
+<div id="dupes-list"></div>
+
+<script>
+let pollTimer = null;
+
+async function fetchStatus() {
+  try {
+    const r = await fetch('/api/status');
+    const s = await r.json();
+    document.getElementById('stat-files').textContent = s.fingerprinted;
+    document.getElementById('stat-dupes').textContent = s.duplicate_groups;
+    document.getElementById('stat-status').textContent = s.scanning ? '⏳ ' + s.scan_message : s.scan_message;
+    document.getElementById('btn-scan').disabled = s.scanning;
+    if (s.scanning && !pollTimer) {
+      pollTimer = setInterval(fetchStatus, 1000);
+    } else if (!s.scanning && pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+  } catch(e) { console.error(e); }
+}
+
+async function startScan() {
+  const path = document.getElementById('scan-path').value.trim();
+  if (!path) { showMsg('Enter a path to scan', 'error'); return; }
+  try {
+    const r = await fetch('/api/scan', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ paths: [path] })
+    });
+    if (!r.ok) { showMsg(await r.text(), 'error'); return; }
+    showMsg('Scan started...', 'info');
+    pollTimer = setInterval(fetchStatus, 1000);
+    fetchStatus();
+  } catch(e) { showMsg(e.message, 'error'); }
+}
+
+async function findDupes() {
+  document.getElementById('btn-dupes').disabled = true;
+  try {
+    const r = await fetch('/api/dupes');
+    const groups = await r.json();
+    renderGroups(groups);
+    fetchStatus();
+  } catch(e) { showMsg(e.message, 'error'); }
+  document.getElementById('btn-dupes').disabled = false;
+}
+
+function renderGroups(groups) {
+  const el = document.getElementById('dupes-list');
+  if (!groups.length) { el.innerHTML = '<div class="message info">No duplicates found.</div>'; return; }
+  el.innerHTML = groups.map(g => `
+    <div class="group" id="group-${g.id.slice(0,8)}">
+      <div class="group-header" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'">
+        <span><span class="group-similarity">${Math.round(g.similarity*100)}%</span> similar — ${g.files.length} files</span>
+        <span class="group-id">${g.id.slice(0,8)}</span>
+      </div>
+      <div class="group-files">
+        ${g.files.map((f, i) => renderFile(g, f, i)).join('')}
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderFile(group, file, index) {
+  const badges = [];
+  if (index === 0) badges.push('<span class="file-badge badge-best">keep</span>');
+  if (file.match_kind === 'exact_copy') badges.push('<span class="file-badge badge-exact">exact copy</span>');
+  else if (file.match_kind === 'same_audio') badges.push('<span class="file-badge badge-same-audio">same audio</span>');
+  const duration = formatDuration(file.duration_secs);
+  const actions = index > 0 ? `
+    <div class="file-actions">
+      <button class="secondary" onclick="doAction('${group.id}', ${index}, 'trash')">Trash</button>
+      <button class="danger" onclick="doAction('${group.id}', ${index}, 'delete')">Delete</button>
+      <button class="secondary" onclick="doAction('${group.id}', ${index}, 'exclude')">Exclude</button>
+    </div>` : '';
+  return `
+    <div class="file" id="file-${group.id.slice(0,8)}-${index}">
+      <div class="file-info">
+        <div class="file-path">${escapeHtml(file.path)}</div>
+        <div class="file-meta">${duration} ${badges.join(' ')}</div>
+      </div>
+      ${actions}
+    </div>`;
+}
+
+async function doAction(groupId, fileIndex, action) {
+  if (action === 'delete' && !confirm('Permanently delete this file?')) return;
+  try {
+    const r = await fetch('/api/action', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ group_id: groupId, file_index: fileIndex, action })
+    });
+    const result = await r.json();
+    if (r.ok) {
+      showMsg(`${action}: ${result.path || ''}`, 'info');
+      const el = document.getElementById(`file-${groupId.slice(0,8)}-${fileIndex}`);
+      if (el) el.style.opacity = '0.3';
+    } else {
+      showMsg(result || 'Action failed', 'error');
+    }
+  } catch(e) { showMsg(e.message, 'error'); }
+}
+
+function formatDuration(secs) {
+  const m = Math.floor(secs / 60);
+  const s = Math.floor(secs % 60);
+  return `${m}:${s.toString().padStart(2,'0')}`;
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function showMsg(text, type) {
+  const el = document.getElementById('messages');
+  el.innerHTML = `<div class="message ${type}">${escapeHtml(text)}</div>`;
+  setTimeout(() => { if (el.firstChild) el.firstChild.remove(); }, 5000);
+}
+
+// Initial load
+fetchStatus();
+</script>
+</body>
+</html>
