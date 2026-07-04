@@ -181,7 +181,9 @@ fn find_duplicates_from_db(
                     }
                 })
                 .collect();
-            files.sort_by(|a, b| a.path.cmp(&b.path));
+            files.sort_by(|a, b| {
+                crate::keep::quality_score(b).cmp(&crate::keep::quality_score(a))
+            });
             DuplicateGroup {
                 files,
                 similarity: max_score,

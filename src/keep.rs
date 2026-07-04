@@ -158,7 +158,8 @@ fn select_best(files: &[DuplicateFile]) -> Option<usize> {
 }
 
 /// Compute a quality score for ranking. Higher is better.
-fn quality_score(file: &DuplicateFile) -> (u8, u32, u32, u64) {
+/// Returns (lossless, sample_rate, bits_per_sample, file_size).
+pub fn quality_score(file: &DuplicateFile) -> (u8, u32, u32, u64) {
     let ext = file
         .path
         .extension()

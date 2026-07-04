@@ -29,26 +29,28 @@ Windows: download `dupsonic-windows-x86_64.zip` from the [releases page](https:/
 
 ## Usage
 
-### Find duplicates (3 commands)
+### Find duplicates (2 commands)
 
 ```bash
-dupsonic scan ~/Music       # fingerprint your library (only once, ~36s for 2000 files)
+dupsonic scan ~/Music       # fingerprint your library (only once, ~6s for 2000 files)
 dupsonic find-dupes         # show duplicate groups
 ```
 
 That's it. Output:
 
 ```
-── Duplicate Group 1 (2 files) ──
-  [100%] ~/Music/Artist/Album/track.flac (3:18)
-  [97%]  ~/Music/Downloads/track.mp3 (3:18)
+── Duplicate Group 1 (2 files, 97% similar) ──
+  ~/Music/Artist/Album/track.flac (3:18)
+  ~/Music/Downloads/track.mp3 (3:18)
 
-── Duplicate Group 2 (2 files) ──
-  [100%] ~/Music/Artist/Album/song.flac (2:52)
-  [97%]  ~/Music/Old/song.ogg (2:52)
+── Duplicate Group 2 (2 files, 97% similar) ──
+  ~/Music/Artist/Album/song.flac (2:52)
+  ~/Music/Old/song.ogg (2:52)
 
 Summary: 2 duplicate groups, 2 redundant files
 ```
+
+Files are sorted by quality (best first) — the top file is the one `--keep best` would preserve.
 
 ### See quality details
 
@@ -57,10 +59,24 @@ dupsonic find-dupes --details
 ```
 
 ```
-── Duplicate Group 1 (2 files) ──
-  [100%] ~/Music/Artist/Album/track.flac (3:18, FLAC, 48kHz/24bit ~1606kbps 38.1 MB)
-  [97%]  ~/Music/Downloads/track.mp3 (3:18, MP3, 44kHz ~178kbps 3.7 MB)
+── Duplicate Group 1 (2 files, 97% similar) ──
+  ~/Music/Artist/Album/track.flac (3:18, FLAC, 48kHz/24bit ~1606kbps 38.1 MB)
+  ~/Music/Downloads/track.mp3 (3:18, MP3, 44kHz ~178kbps 3.7 MB)
 ```
+
+### Duplicate classification
+
+When files have 100% identical fingerprints, dupsonic further classifies them using cached SHA-256 hashes:
+
+```
+── Duplicate Group 1 (3 files, 100% similar) ──
+  [exact copy] ~/Music/Artist/track.flac (3:18)
+  [exact copy] ~/Music/Backup/track.flac (3:18)
+  [same audio] ~/Music/Artist/track_retagged.flac (3:18)
+```
+
+- **exact copy** — byte-for-byte identical files (safe to delete)
+- **same audio** — same audio stream, different tags/metadata
 
 ### Remove duplicates
 
@@ -187,18 +203,63 @@ dupsonic include file1.flac              # re-include
 dupsonic include --all                   # clear all exclusions
 ```
 
-### `status` / `clean-cache`
+### `clean-cache` — Remove database entries
+
+```bash
+dupsonic clean-cache                     # remove entries for deleted files
+dupsonic clean-cache "**/Podcasts/**"    # remove entries matching patterns
+dupsonic clean-cache "*.wma" "*.m4p"    # remove by extension
+```
+
+Without arguments, removes entries for files that no longer exist on disk. With gitignore-style patterns, removes matching entries regardless of whether the files still exist.
+
+### `status`
 
 ```bash
 dupsonic status                          # show database stats
-dupsonic clean-cache                     # remove entries for deleted files
 ```
+
+## Configuration
+
+### Database location
+
+dupsonic stores its fingerprint cache in a SQLite database:
+
+- **Linux**: `~/.local/share/dupsonic/cache.db`
+- **macOS**: `~/Library/Application Support/dupsonic/cache.db`
+- **Windows**: `AppData\Roaming\dupsonic\cache.db`
+
+Override with `--db <path>` or the `DUPSONIC_DB` environment variable:
+
+```bash
+export DUPSONIC_DB=/mnt/shared/dupsonic.db
+dupsonic scan ~/Music
+dupsonic find-dupes
+```
+
+The `--db` flag takes precedence over the environment variable.
 
 ## Output formats
 
 **Human** (default), **JSON** (`--format json`), **JSON Lines** (`--format jsonl`).
 
 With `--details`, JSON includes: `format`, `size_bytes`, `sample_rate`, `bits_per_sample`, `channels`, `bitrate_kbps`, `recording_mbid`, `acoustid`, and `tags` (artist/title/album).
+
+JSON structure:
+```json
+[
+  {
+    "group_id": 1,
+    "similarity": 0.97,
+    "files": [
+      { "path": "/music/track.flac", "duration_secs": 198.5 },
+      { "path": "/music/track.mp3", "duration_secs": 198.3, "match_kind": "same_audio" }
+    ]
+  }
+]
+```
+
+The `match_kind` field appears only for 100% matches: `"exact_copy"` or `"same_audio"`.
 
 For scripting, use `-q` (quiet) to suppress progress bars:
 ```bash
@@ -216,7 +277,7 @@ dupsonic -q find-dupes --format json > dupes.json
 | **Total** | **~6s** | **36s** | **2m 38s** |
 | **Duplicates found** | 33 groups | 33 groups | 32 groups |
 
-Designed for 100k+ file collections: parallel scanning, incremental cache, LSH-based O(n) matching.
+Designed for 100k+ file collections: parallel scanning, incremental cache, LSH-based O(n) matching, batched database writes.
 
 ## How it works
 
@@ -226,7 +287,8 @@ Designed for 100k+ file collections: parallel scanning, incremental cache, LSH-b
 4. **Filter** — reject candidates with incompatible durations
 5. **Verify** — bit-error-rate fingerprint comparison
 6. **Group** — Union-Find groups duplicates transitively
-7. **Identify** (optional) — filter by MusicBrainz Recording IDs
+7. **Classify** — for 100% matches, compute file/audio hashes to distinguish exact copies from same-audio
+8. **Identify** (optional) — filter by MusicBrainz Recording IDs
 
 ## Supported formats
 
@@ -262,14 +324,6 @@ Single static binary, no external dependencies:
 - **[chromaprint-next](https://lib.rs/crates/chromaprint-next)** — acoustic fingerprinting (pure Rust, faster than C reference)
 - **[Symphonia](https://github.com/pdeljanov/Symphonia)** — audio decoding (pure Rust, no FFmpeg)
 - **SQLite** — fingerprint cache (bundled)
-
-## Database location
-
-- **Linux**: `~/.local/share/dupsonic/cache.db`
-- **macOS**: `~/Library/Application Support/dupsonic/cache.db`
-- **Windows**: `AppData\Roaming\dupsonic\cache.db`
-
-Override with `--db <path>`.
 
 ## Shell completions
 
