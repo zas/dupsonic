@@ -7,6 +7,7 @@
 ```bash
 dupsonic scan ~/Music                    # scan a directory (recursive)
 dupsonic scan ~/Music /mnt/external      # scan multiple directories
+dupsonic scan                            # re-scan all previously scanned paths
 dupsonic scan track.flac other.mp3       # scan specific files
 dupsonic scan -j 8 ~/Music              # use 8 parallel workers
 dupsonic scan --length 15 ~/Music       # fast scan (15s fingerprints)
@@ -14,9 +15,13 @@ dupsonic scan --length 300 ~/Music      # for podcasts/audiobooks
 dupsonic scan --ignore "*.m4p" ~/Music  # skip files matching pattern
 dupsonic scan -i "**/Podcasts/**" -i "**/Audiobooks/**" ~/Music
 dupsonic scan --force ~/Music           # re-fingerprint everything
+dupsonic scan --list                     # show stored scan paths
+dupsonic scan --remove ~/Old             # remove a path from stored set
 ```
 
 Fingerprints are cached — subsequent scans only process new or modified files. Changing `--length` automatically re-scans affected files.
+
+Scan paths are remembered: running `dupsonic scan` with no arguments re-scans all previously scanned directories. On first run with no arguments, dupsonic detects the platform's default music directory and asks for confirmation.
 
 #### `.dupsonic-ignore` file
 
@@ -194,6 +199,35 @@ exec dupsonic fpcalc "$@"
 ```
 
 Set this as the fpcalc path in Picard's *Options → Fingerprinting*. Run `dupsonic scan ~/Music` first to pre-populate the cache.
+
+## Web UI
+
+For headless servers (NAS, Raspberry Pi, OpenMediaVault), dupsonic includes a built-in web interface:
+
+```bash
+dupsonic serve                          # http://0.0.0.0:8080
+dupsonic serve --bind 127.0.0.1:3000    # custom address/port
+```
+
+Features:
+- **Status dashboard** — file count, scan state
+- **Scan** — enter a path or re-scan stored paths (pre-filled from previous scans)
+- **Find duplicates** — view all groups with similarity %, classification badges, quality details (format, sample rate, bit depth, bitrate, size)
+- **Delete** — moves files to system trash (FreeDesktop on Linux, native on macOS/Windows)
+- **Restore** — undo a delete (restores from system trash)
+- **Exclude** — hide files from future results
+
+Files are sorted by quality (best first). All files can be deleted — it's the user's choice.
+
+### API endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/status` | Database stats, scan state, stored paths |
+| POST | `/api/scan` | Start background scan (body: `{"paths": [...]}` or `{}` for stored) |
+| GET | `/api/dupes` | Find and return duplicate groups with details |
+| POST | `/api/action` | Trash or exclude a file |
+| POST | `/api/restore` | Restore a trashed file |
 
 ## Shell completions
 

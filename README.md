@@ -16,6 +16,13 @@ dupsonic scan ~/Music       # fingerprint your library (only once, ~6s for 2000 
 dupsonic find-dupes         # show duplicate groups
 ```
 
+Or just:
+
+```bash
+dupsonic scan               # auto-detects your Music folder on first run
+dupsonic find-dupes
+```
+
 Output:
 
 ```
@@ -89,6 +96,18 @@ Benchmark with 2025 files (mixed FLAC/MP3 collection):
 | **Duplicates found** | 33 groups | 33 groups | 32 groups |
 
 Designed for 100k+ file collections: parallel scanning, incremental cache, LSH-based O(n) matching, batched database writes.
+
+## Web UI
+
+For headless servers (NAS, Raspberry Pi), dupsonic includes a built-in web interface:
+
+```bash
+dupsonic serve              # http://0.0.0.0:8080
+```
+
+Open from any browser on your network. Features: scan, find duplicates, view quality details, delete (moves to system trash with undo), exclude.
+
+See [ADVANCED.md](ADVANCED.md#web-ui) for configuration options.
 
 ## Similar projects
 
