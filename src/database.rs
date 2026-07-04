@@ -76,6 +76,11 @@ impl Database {
 
             CREATE INDEX IF NOT EXISTS idx_band_hashes_lookup
                 ON band_hashes(hash, band_idx);
+
+            CREATE TABLE IF NOT EXISTS scan_paths (
+                path TEXT NOT NULL UNIQUE,
+                added_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
             ",
         )?;
 
@@ -561,6 +566,42 @@ impl Database {
             .filter_map(|r| r.ok())
             .collect();
         Ok(results)
+    }
+
+    /// Store scan paths (adds new, keeps existing).
+    pub fn store_scan_paths(&self, paths: &[PathBuf]) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("INSERT OR IGNORE INTO scan_paths (path) VALUES (?1)")?;
+        for path in paths {
+            let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+            stmt.execute(params![canonical.to_string_lossy().as_ref()])?;
+        }
+        Ok(())
+    }
+
+    /// Load all stored scan paths.
+    pub fn load_scan_paths(&self) -> Result<Vec<PathBuf>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT path FROM scan_paths ORDER BY path")?;
+        let results = stmt
+            .query_map([], |row| {
+                let path: String = row.get(0)?;
+                Ok(PathBuf::from(path))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(results)
+    }
+
+    /// Remove a scan path.
+    pub fn remove_scan_path(&self, path: &Path) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let rows = conn.execute(
+            "DELETE FROM scan_paths WHERE path = ?1",
+            params![canonical.to_string_lossy().as_ref()],
+        )?;
+        Ok(rows > 0)
     }
 }
 

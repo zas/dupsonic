@@ -43,6 +43,12 @@ pub fn scan(
         }
     }
 
+    // Remember valid scan paths for future re-scans
+    let valid_paths: Vec<PathBuf> = paths.iter().filter(|p| p.exists()).cloned().collect();
+    if !valid_paths.is_empty() {
+        let _ = db.store_scan_paths(&valid_paths);
+    }
+
     // Build ignore glob set
     let ignore_set = build_ignore_set(ignore_patterns, paths)?;
 

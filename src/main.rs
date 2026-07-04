@@ -33,8 +33,7 @@ struct Cli {
 enum Commands {
     /// Scan directories and fingerprint audio files
     Scan {
-        /// Directories to scan for audio files
-        #[arg(required = true)]
+        /// Directories to scan for audio files (omit to re-scan previously scanned paths)
         paths: Vec<PathBuf>,
 
         /// Number of parallel workers for fingerprinting
@@ -215,6 +214,24 @@ fn main() -> Result<()> {
             ignore,
             force,
         } => {
+            let paths = if paths.is_empty() {
+                let stored = db.load_scan_paths()?;
+                if stored.is_empty() {
+                    eprintln!("No paths specified and no previously scanned paths found.");
+                    eprintln!();
+                    eprintln!("Usage: dupsonic scan <path-to-music>");
+                    std::process::exit(1);
+                }
+                if !cli.quiet {
+                    eprintln!("Re-scanning {} stored path(s):", stored.len());
+                    for p in &stored {
+                        eprintln!("  {}", p.display());
+                    }
+                }
+                stored
+            } else {
+                paths
+            };
             scanner::scan(&db, &paths, jobs, length, &ignore, force, cli.quiet)?;
         }
         Commands::FindDupes {

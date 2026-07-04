@@ -86,6 +86,13 @@ async fn api_status(State(state): State<Arc<AppState>>) -> Json<serde_json::Valu
     });
     let scan_status = state.scan_status.lock().unwrap().clone();
     let dupes_count = state.dupes.lock().unwrap().len();
+    let scan_paths: Vec<String> = state
+        .db
+        .load_scan_paths()
+        .unwrap_or_default()
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
 
     Json(serde_json::json!({
         "database": state.db_path.to_string_lossy(),
@@ -95,6 +102,7 @@ async fn api_status(State(state): State<Arc<AppState>>) -> Json<serde_json::Valu
         "scanning": scan_status.scanning,
         "scan_message": scan_status.message,
         "duplicate_groups": dupes_count,
+        "scan_paths": scan_paths,
     }))
 }
 
@@ -131,7 +139,19 @@ async fn api_scan(
         }
     }
 
-    let paths: Vec<PathBuf> = req.paths.iter().map(PathBuf::from).collect();
+    // Use provided paths, or fall back to stored paths
+    let paths: Vec<PathBuf> = if req.paths.is_empty() {
+        state.db.load_scan_paths().unwrap_or_default()
+    } else {
+        req.paths.iter().map(PathBuf::from).collect()
+    };
+
+    if paths.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "No paths specified and no previously scanned paths found".to_string(),
+        ));
+    }
 
     // Validate paths
     for path in &paths {

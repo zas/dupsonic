@@ -57,7 +57,7 @@ button.secondary:hover { background: #555; }
 </div>
 
 <div class="controls">
-  <input type="text" id="scan-path" placeholder="Path to scan (e.g. /srv/music)" value="">
+  <input type="text" id="scan-path" placeholder="Path to scan (e.g. /srv/music)" value="" oninput="this.dataset.userEdited='true'">
   <button onclick="startScan()" id="btn-scan">Scan</button>
   <button onclick="findDupes()" id="btn-dupes">Find Dupes</button>
 </div>
@@ -76,6 +76,12 @@ async function fetchStatus() {
     document.getElementById('stat-dupes').textContent = s.duplicate_groups;
     document.getElementById('stat-status').textContent = s.scanning ? '⏳ ' + s.scan_message : s.scan_message;
     document.getElementById('btn-scan').disabled = s.scanning;
+    // Pre-fill scan path from stored paths
+    const input = document.getElementById('scan-path');
+    if (!input.dataset.userEdited && s.scan_paths && s.scan_paths.length > 0) {
+      input.value = s.scan_paths.join(', ');
+      input.placeholder = s.scan_paths.join(', ');
+    }
     if (s.scanning && !pollTimer) {
       pollTimer = setInterval(fetchStatus, 1000);
     } else if (!s.scanning && pollTimer) {
@@ -86,13 +92,13 @@ async function fetchStatus() {
 }
 
 async function startScan() {
-  const path = document.getElementById('scan-path').value.trim();
-  if (!path) { showMsg('Enter a path to scan', 'error'); return; }
+  const pathInput = document.getElementById('scan-path').value.trim();
+  const paths = pathInput ? pathInput.split(',').map(p => p.trim()).filter(p => p) : [];
   try {
     const r = await fetch('/api/scan', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ paths: [path] })
+      body: JSON.stringify({ paths })
     });
     if (!r.ok) { showMsg(await r.text(), 'error'); return; }
     showMsg('Scan started...', 'info');
