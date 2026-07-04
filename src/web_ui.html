@@ -165,15 +165,47 @@ async function doAction(groupId, fileIndex, action) {
     });
     const result = await r.json();
     if (r.ok) {
-      showMsg(`${action}: ${result.path || ''}`, 'info');
+      showMsg(`${result.status}: ${result.path || ''}`, 'info');
       const el = document.getElementById(`file-${groupId.slice(0,8)}-${fileIndex}`);
       if (el) {
-        el.style.opacity = '0.3';
-        el.style.pointerEvents = 'none';
-        el.querySelectorAll('button').forEach(b => b.disabled = true);
+        el.querySelector('.file-info').style.opacity = '0.3';
+        const actionsDiv = el.querySelector('.file-actions');
+        if (actionsDiv && action === 'delete') {
+          actionsDiv.innerHTML = `<button class="secondary" onclick="doRestore('${escapeHtml(result.path)}', '${groupId}', ${fileIndex})">Restore</button>`;
+        } else if (actionsDiv) {
+          actionsDiv.innerHTML = '';
+          el.style.pointerEvents = 'none';
+        }
       }
     } else {
       showMsg(result || 'Action failed', 'error');
+    }
+  } catch(e) { showMsg(e.message, 'error'); }
+}
+
+async function doRestore(path, groupId, fileIndex) {
+  try {
+    const r = await fetch('/api/restore', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ path })
+    });
+    const result = await r.json();
+    if (r.ok) {
+      showMsg(`Restored: ${result.path}`, 'info');
+      const el = document.getElementById(`file-${groupId.slice(0,8)}-${fileIndex}`);
+      if (el) {
+        el.querySelector('.file-info').style.opacity = '1';
+        el.style.pointerEvents = '';
+        const actionsDiv = el.querySelector('.file-actions');
+        if (actionsDiv) {
+          actionsDiv.innerHTML = `
+            <button class="danger" onclick="doAction('${groupId}', ${fileIndex}, 'delete')">Delete</button>
+            <button class="secondary" onclick="doAction('${groupId}', ${fileIndex}, 'exclude')">Exclude</button>`;
+        }
+      }
+    } else {
+      showMsg(result || 'Restore failed', 'error');
     }
   } catch(e) { showMsg(e.message, 'error'); }
 }

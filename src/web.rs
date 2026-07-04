@@ -55,6 +55,7 @@ pub async fn serve(db: Database, db_path: PathBuf, bind: &str) -> anyhow::Result
         .route("/api/scan", post(api_scan))
         .route("/api/dupes", get(api_dupes))
         .route("/api/action", post(api_action))
+        .route("/api/restore", post(api_restore))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(bind).await?;
@@ -306,6 +307,49 @@ async fn api_action(
             format!("Unknown action: {}. Use: delete, exclude", req.action),
         )),
     }
+}
+
+#[derive(Deserialize)]
+struct RestoreRequest {
+    path: String,
+}
+
+async fn api_restore(
+    Json(req): Json<RestoreRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let original_path = std::path::PathBuf::from(&req.path);
+
+    // Find the item in trash by its original path
+    let trash_items = trash::os_limited::list().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to list trash: {}", e),
+        )
+    })?;
+
+    let matching: Vec<_> = trash_items
+        .into_iter()
+        .filter(|item| item.original_path() == original_path)
+        .collect();
+
+    if matching.is_empty() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            format!("Not found in trash: {}", req.path),
+        ));
+    }
+
+    trash::os_limited::restore_all(matching).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to restore: {}", e),
+        )
+    })?;
+
+    Ok(Json(serde_json::json!({
+        "status": "restored",
+        "path": req.path,
+    })))
 }
 
 // --- Static HTML ---
