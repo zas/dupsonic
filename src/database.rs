@@ -138,6 +138,34 @@ impl Database {
         }
     }
 
+    /// Load all cached file metadata in one query for efficient batch filtering.
+    /// Returns a map of path -> (size, mtime_secs, fingerprint_length).
+    pub fn load_cached_metadata(
+        &self,
+    ) -> Result<std::collections::HashMap<PathBuf, (i64, i64, Option<i64>)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT path, size, mtime_secs, fingerprint_length FROM files WHERE fingerprint IS NOT NULL",
+        )?;
+
+        let mut map = std::collections::HashMap::new();
+        let rows = stmt.query_map([], |row| {
+            let path: String = row.get(0)?;
+            let size: i64 = row.get(1)?;
+            let mtime: i64 = row.get(2)?;
+            let fp_length: Option<i64> = row.get(3)?;
+            Ok((path, size, mtime, fp_length))
+        })?;
+
+        for row in rows {
+            if let Ok((path, size, mtime, fp_length)) = row {
+                map.insert(PathBuf::from(path), (size, mtime, fp_length));
+            }
+        }
+
+        Ok(map)
+    }
+
     /// Store a successful fingerprint result.
     pub fn store_fingerprint(
         &self,
@@ -517,7 +545,8 @@ fn bytes_to_fingerprint(bytes: &[u8]) -> Vec<u32> {
         .collect()
 }
 
-fn file_mtime_secs(meta: &std::fs::Metadata) -> i64 {
+/// Compute file modification time as seconds since UNIX epoch.
+pub fn file_mtime_secs(meta: &std::fs::Metadata) -> i64 {
     use std::time::UNIX_EPOCH;
     meta.modified()
         .ok()
@@ -634,12 +663,8 @@ impl Database {
                         *fingerprint_length as i64,
                     ])?;
 
-                    // Get the file_id for band hashes
-                    let file_id: i64 = conn.query_row(
-                        "SELECT id FROM files WHERE path = ?1",
-                        params![path.to_string_lossy().as_ref()],
-                        |row| row.get(0),
-                    )?;
+                    // INSERT OR REPLACE deletes + re-inserts, so last_insert_rowid is valid
+                    let file_id = conn.last_insert_rowid();
 
                     band_del_stmt.execute(params![file_id])?;
                     for (idx, &hash) in band_hashes.iter().enumerate() {

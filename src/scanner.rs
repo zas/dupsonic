@@ -63,9 +63,27 @@ pub fn scan(
     let to_process: Vec<PathBuf> = if force {
         files
     } else {
+        let cached = db.load_cached_metadata()?;
         files
             .into_iter()
-            .filter(|f| !db.is_current(f, length).unwrap_or(false))
+            .filter(|f| {
+                let meta = match std::fs::metadata(f) {
+                    Ok(m) => m,
+                    Err(_) => return true, // Can't stat — try to process
+                };
+                match cached.get(f) {
+                    Some(&(size, mtime, fp_length)) => {
+                        let length_matches = fp_length
+                            .map(|l| l == length as i64)
+                            .unwrap_or(false);
+                        // Re-process if size, mtime, or fingerprint length changed
+                        !(meta.len() as i64 == size
+                            && crate::database::file_mtime_secs(&meta) == mtime
+                            && length_matches)
+                    }
+                    None => true, // Not in cache — needs processing
+                }
+            })
             .collect()
     };
 
