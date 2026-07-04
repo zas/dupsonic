@@ -51,6 +51,14 @@ enum Commands {
         /// Force re-fingerprinting of already-scanned files
         #[arg(long)]
         force: bool,
+
+        /// Remove paths from stored scan paths instead of scanning
+        #[arg(long)]
+        remove: bool,
+
+        /// List stored scan paths
+        #[arg(long)]
+        list: bool,
     },
 
     /// Find duplicate audio files from the fingerprint database
@@ -213,7 +221,37 @@ fn main() -> Result<()> {
             length,
             ignore,
             force,
+            remove,
+            list,
         } => {
+            if list {
+                let stored = db.load_scan_paths()?;
+                if stored.is_empty() {
+                    println!("No stored scan paths.");
+                } else {
+                    println!("Stored scan paths:");
+                    for p in &stored {
+                        println!("  {}", p.display());
+                    }
+                }
+                return Ok(());
+            }
+
+            if remove {
+                if paths.is_empty() {
+                    eprintln!("Specify paths to remove: dupsonic scan --remove <path>");
+                    std::process::exit(1);
+                }
+                for path in &paths {
+                    if db.remove_scan_path(path)? {
+                        println!("Removed: {}", path.display());
+                    } else {
+                        println!("Not found: {}", path.display());
+                    }
+                }
+                return Ok(());
+            }
+
             let paths = if paths.is_empty() {
                 let stored = db.load_scan_paths()?;
                 if stored.is_empty() {
