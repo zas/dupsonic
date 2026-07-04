@@ -318,6 +318,7 @@ Requires Rust 1.95+:
 git clone https://github.com/zas/dupsonic
 cd dupsonic
 cargo build --release
+ln -sf ../../hooks/pre-commit .git/hooks/pre-commit  # install pre-commit checks
 ```
 
 Single static binary, no external dependencies:
