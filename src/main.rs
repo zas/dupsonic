@@ -266,7 +266,7 @@ fn main() -> Result<()> {
             };
 
             // Classify 100% fingerprint matches as exact copies or same-audio
-            matcher::classify_matches(&mut groups);
+            matcher::classify_matches(&mut groups, &db);
 
             if let Some(ref cmd) = exec {
                 let strategy: dupsonic::keep::KeepStrategy = keep.parse()?;

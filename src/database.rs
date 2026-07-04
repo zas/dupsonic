@@ -98,6 +98,18 @@ impl Database {
             conn.execute_batch("ALTER TABLE files ADD COLUMN excluded INTEGER DEFAULT 0;")?;
         }
 
+        let has_file_sha256: bool = conn
+            .prepare("SELECT file_sha256 FROM files LIMIT 0")
+            .is_ok();
+        if !has_file_sha256 {
+            conn.execute_batch(
+                "
+                ALTER TABLE files ADD COLUMN file_sha256 TEXT;
+                ALTER TABLE files ADD COLUMN audio_sha256 TEXT;
+                ",
+            )?;
+        }
+
         // Create indexes that depend on migrated columns
         conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_files_excluded ON files(excluded) WHERE excluded = 1;",
@@ -478,6 +490,49 @@ impl Database {
             )
             .ok();
         Ok(result)
+    }
+
+    /// Store computed hashes for a file.
+    pub fn store_hashes(
+        &self,
+        path: &Path,
+        file_sha256: &str,
+        audio_sha256: &str,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE files SET file_sha256 = ?1, audio_sha256 = ?2 WHERE path = ?3",
+            params![file_sha256, audio_sha256, path.to_string_lossy().as_ref()],
+        )?;
+        Ok(())
+    }
+
+    /// Load cached file and audio hashes for all fingerprinted files.
+    /// Returns a map of path -> (file_sha256, audio_sha256).
+    pub fn load_hashes(
+        &self,
+    ) -> Result<std::collections::HashMap<PathBuf, (Option<String>, Option<String>)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT path, file_sha256, audio_sha256 FROM files
+             WHERE fingerprint IS NOT NULL AND COALESCE(excluded, 0) = 0",
+        )?;
+
+        let mut map = std::collections::HashMap::new();
+        let rows = stmt.query_map([], |row| {
+            let path: String = row.get(0)?;
+            let file_hash: Option<String> = row.get(1)?;
+            let audio_hash: Option<String> = row.get(2)?;
+            Ok((path, file_hash, audio_hash))
+        })?;
+
+        for row in rows {
+            if let Ok((path, file_hash, audio_hash)) = row {
+                map.insert(PathBuf::from(path), (file_hash, audio_hash));
+            }
+        }
+
+        Ok(map)
     }
 
     /// Exclude a file from duplicate results.

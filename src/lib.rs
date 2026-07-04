@@ -33,6 +33,8 @@ pub mod database;
 pub mod exec;
 /// Audio decoding and Chromaprint fingerprint generation.
 pub mod fingerprint;
+/// File and audio-stream hashing for duplicate classification.
+pub mod hash;
 /// Drop-in replacement for Chromaprint's `fpcalc` tool.
 pub mod fpcalc;
 /// Resolve recording MBIDs from tags and AcoustID.
