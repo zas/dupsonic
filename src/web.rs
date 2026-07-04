@@ -332,9 +332,18 @@ struct RestoreRequest {
 async fn api_restore(
     Json(req): Json<RestoreRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let original_path = std::path::PathBuf::from(&req.path);
+    restore_from_trash(&req.path)
+}
 
-    // Find the item in trash by its original path
+#[cfg(all(
+    unix,
+    not(target_os = "macos"),
+    not(target_os = "ios"),
+    not(target_os = "android")
+))]
+fn restore_from_trash(path: &str) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let original_path = std::path::PathBuf::from(path);
+
     let trash_items = trash::os_limited::list().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -350,7 +359,7 @@ async fn api_restore(
     if matching.is_empty() {
         return Err((
             StatusCode::NOT_FOUND,
-            format!("Not found in trash: {}", req.path),
+            format!("Not found in trash: {}", path),
         ));
     }
 
@@ -363,8 +372,24 @@ async fn api_restore(
 
     Ok(Json(serde_json::json!({
         "status": "restored",
-        "path": req.path,
+        "path": path,
     })))
+}
+
+#[cfg(not(all(
+    unix,
+    not(target_os = "macos"),
+    not(target_os = "ios"),
+    not(target_os = "android")
+)))]
+fn restore_from_trash(path: &str) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    Err((
+        StatusCode::NOT_IMPLEMENTED,
+        format!(
+            "Restore is not supported on this platform. Restore '{}' manually from your system trash.",
+            path
+        ),
+    ))
 }
 
 // --- Static HTML ---
