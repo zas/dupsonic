@@ -44,6 +44,7 @@ impl FromStr for Format {
 #[derive(Serialize)]
 struct JsonGroup {
     group_id: usize,
+    similarity: f64,
     files: Vec<JsonFile>,
 }
 
@@ -51,7 +52,6 @@ struct JsonGroup {
 struct JsonFile {
     path: String,
     duration_secs: f64,
-    similarity: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     match_kind: Option<String>,
 }
@@ -60,6 +60,7 @@ struct JsonFile {
 #[derive(Serialize)]
 struct DetailedJsonGroup {
     group_id: usize,
+    similarity: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     recording_mbid: Option<String>,
     files: Vec<DetailedJsonFile>,
@@ -69,7 +70,6 @@ struct DetailedJsonGroup {
 struct DetailedJsonFile {
     path: String,
     duration_secs: f64,
-    similarity: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     match_kind: Option<String>,
     format: String,
@@ -136,19 +136,19 @@ pub fn print_results(
 fn print_human(groups: &[DuplicateGroup]) {
     for (i, group) in groups.iter().enumerate() {
         println!(
-            "── Duplicate Group {} ({} files) ──",
+            "── Duplicate Group {} ({} files, {:.0}% similar) ──",
             i + 1,
-            group.files.len()
+            group.files.len(),
+            group.similarity * 100.0,
         );
         for file in &group.files {
             let duration = format_duration(file.duration_secs);
-            let score_label = format_score_label(file);
-            println!(
-                "  {} {} ({})",
-                score_label,
-                file.path.display(),
-                duration,
-            );
+            let label = format_score_label(file);
+            if label.is_empty() {
+                println!("  {} ({})", file.path.display(), duration);
+            } else {
+                println!("  {} {} ({})", label, file.path.display(), duration);
+            }
         }
         println!();
     }
@@ -164,9 +164,10 @@ fn print_human(groups: &[DuplicateGroup]) {
 fn print_human_detailed(groups: &[DuplicateGroup], db: Option<&Database>) {
     for (i, group) in groups.iter().enumerate() {
         println!(
-            "── Duplicate Group {} ({} files) ──",
+            "── Duplicate Group {} ({} files, {:.0}% similar) ──",
             i + 1,
-            group.files.len()
+            group.files.len(),
+            group.similarity * 100.0,
         );
         for file in &group.files {
             let duration = format_duration(file.duration_secs);
@@ -193,16 +194,27 @@ fn print_human_detailed(groups: &[DuplicateGroup], db: Option<&Database>) {
                 String::new()
             };
 
-            let score_label = format_score_label(file);
-            println!(
-                "  {} {} ({}, {},{} {})",
-                score_label,
-                file.path.display(),
-                duration,
-                ext.to_uppercase(),
-                audio_detail,
-                format_size(size),
-            );
+            let label = format_score_label(file);
+            if label.is_empty() {
+                println!(
+                    "  {} ({}, {},{} {})",
+                    file.path.display(),
+                    duration,
+                    ext.to_uppercase(),
+                    audio_detail,
+                    format_size(size),
+                );
+            } else {
+                println!(
+                    "  {} {} ({}, {},{} {})",
+                    label,
+                    file.path.display(),
+                    duration,
+                    ext.to_uppercase(),
+                    audio_detail,
+                    format_size(size),
+                );
+            }
             if let Some(mbid) = mbid {
                 println!("         MBID: {}", mbid);
             }
@@ -241,7 +253,6 @@ fn build_detailed_group(
             DetailedJsonFile {
                 path: f.path.to_string_lossy().into_owned(),
                 duration_secs: f.duration_secs,
-                similarity: f.score,
                 match_kind: match_kind_str(f.match_kind),
                 format: file_extension(&f.path),
                 size_bytes: file_size(&f.path),
@@ -275,6 +286,7 @@ fn build_detailed_group(
 
     DetailedJsonGroup {
         group_id: i + 1,
+        similarity: group.similarity,
         recording_mbid: group_mbid,
         files,
     }
@@ -305,13 +317,13 @@ fn print_json(groups: &[DuplicateGroup]) -> Result<()> {
         .enumerate()
         .map(|(i, g)| JsonGroup {
             group_id: i + 1,
+            similarity: g.similarity,
             files: g
                 .files
                 .iter()
                 .map(|f| JsonFile {
                     path: f.path.to_string_lossy().into_owned(),
                     duration_secs: f.duration_secs,
-                    similarity: f.score,
                     match_kind: match_kind_str(f.match_kind),
                 })
                 .collect(),
@@ -326,13 +338,13 @@ fn print_jsonl(groups: &[DuplicateGroup]) -> Result<()> {
     for (i, group) in groups.iter().enumerate() {
         let json_group = JsonGroup {
             group_id: i + 1,
+            similarity: group.similarity,
             files: group
                 .files
                 .iter()
                 .map(|f| JsonFile {
                     path: f.path.to_string_lossy().into_owned(),
                     duration_secs: f.duration_secs,
-                    similarity: f.score,
                     match_kind: match_kind_str(f.match_kind),
                 })
                 .collect(),
@@ -374,9 +386,9 @@ fn format_size(bytes: u64) -> String {
 
 fn format_score_label(file: &DuplicateFile) -> String {
     match file.match_kind {
-        MatchKind::ExactCopy => "[100% exact copy]".to_string(),
-        MatchKind::SameAudio => "[100% same audio]".to_string(),
-        MatchKind::Similar => format!("[{:.0}%]", file.score * 100.0),
+        MatchKind::ExactCopy => "[exact copy]".to_string(),
+        MatchKind::SameAudio => "[same audio]".to_string(),
+        MatchKind::Similar => String::new(),
     }
 }
 
@@ -431,17 +443,16 @@ mod tests {
     #[test]
     fn test_json_output_structure() {
         let groups = vec![DuplicateGroup {
+            similarity: 0.95,
             files: vec![
                 DuplicateFile {
                     path: PathBuf::from("/music/a.flac"),
                     duration_secs: 222.0,
-                    score: 1.0,
                     match_kind: crate::matcher::MatchKind::Similar,
                 },
                 DuplicateFile {
                     path: PathBuf::from("/music/b.mp3"),
                     duration_secs: 221.0,
-                    score: 0.95,
                     match_kind: crate::matcher::MatchKind::Similar,
                 },
             ],

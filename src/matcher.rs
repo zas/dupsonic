@@ -14,8 +14,10 @@ use crate::fingerprint::{compare_fingerprints, durations_compatible};
 /// A group of files that are acoustic duplicates of each other.
 #[derive(Debug, Clone)]
 pub struct DuplicateGroup {
-    /// Files in this group, sorted by path
+    /// Files in this group, sorted by quality (best first)
     pub files: Vec<DuplicateFile>,
+    /// Similarity score between files in this group (0.0 to 1.0)
+    pub similarity: f64,
 }
 
 /// How closely two files match (only meaningful for 100% fingerprint matches).
@@ -36,8 +38,6 @@ pub struct DuplicateFile {
     pub path: std::path::PathBuf,
     /// Full duration of the audio in seconds.
     pub duration_secs: f64,
-    /// Similarity score to the group's reference file (first file)
-    pub score: f64,
     /// Classification of the match (exact copy, same audio, or similar).
     pub match_kind: MatchKind,
 }
@@ -157,6 +157,9 @@ fn find_duplicates_from_db(
         .filter(|members| members.len() > 1)
         .map(|members| {
             let ref_fp = db.load_fingerprint(&members[0]).ok().flatten();
+
+            // Compute scores for non-reference files
+            let mut max_score = 0.0_f64;
             let mut files: Vec<DuplicateFile> = members
                 .iter()
                 .map(|path| {
@@ -165,30 +168,24 @@ fn find_duplicates_from_db(
                         (Some(r), Some(f)) if path != &members[0] => {
                             compare_fingerprints(&r.fingerprint, &f.fingerprint)
                         }
-                        _ => 1.0, // placeholder for reference, fixed below
+                        _ => 0.0, // reference — not counted
                     };
+                    if path != &members[0] {
+                        max_score = max_score.max(score);
+                    }
                     let duration = fp.map(|f| f.duration_secs).unwrap_or(0.0);
                     DuplicateFile {
                         path: path.clone(),
                         duration_secs: duration,
-                        score,
                         match_kind: MatchKind::Similar,
                     }
                 })
                 .collect();
-            // Set reference file's score to the max similarity in the group
-            let max_other_score = files
-                .iter()
-                .filter(|f| f.path != members[0])
-                .map(|f| f.score)
-                .fold(0.0_f64, f64::max);
-            for file in &mut files {
-                if file.path == members[0] {
-                    file.score = max_other_score;
-                }
-            }
             files.sort_by(|a, b| a.path.cmp(&b.path));
-            DuplicateGroup { files }
+            DuplicateGroup {
+                files,
+                similarity: max_score,
+            }
         })
         .collect();
 
@@ -250,18 +247,12 @@ pub fn classify_matches(groups: &mut [DuplicateGroup], db: &Database) {
     let mut hashes = db.load_hashes().unwrap_or_default();
 
     for group in groups.iter_mut() {
-        // Collect indices of files with 100% fingerprint match
-        let perfect_indices: Vec<usize> = group
-            .files
-            .iter()
-            .enumerate()
-            .filter(|(_, f)| f.score >= 1.0)
-            .map(|(i, _)| i)
-            .collect();
-
-        if perfect_indices.len() < 2 {
-            continue; // Need at least 2 perfect matches to classify
+        // Only classify groups with 100% fingerprint similarity
+        if group.similarity < 1.0 {
+            continue;
         }
+
+        let perfect_indices: Vec<usize> = (0..group.files.len()).collect();
 
         // Ensure hashes are computed for all perfect-match files
         for &idx in &perfect_indices {
@@ -398,6 +389,7 @@ pub fn find_duplicates_for(
     // Compare against all other fingerprints in the DB
     let all_fps = db.load_all_fingerprints()?;
     let mut matches: Vec<DuplicateFile> = Vec::new();
+    let mut max_score = 0.0_f64;
 
     for fp in &all_fps {
         if fp.path == target {
@@ -412,10 +404,10 @@ pub fn find_duplicates_for(
         // Fingerprint comparison
         let score = compare_fingerprints(&target_fp.fingerprint, &fp.fingerprint);
         if score >= threshold {
+            max_score = max_score.max(score);
             matches.push(DuplicateFile {
                 path: fp.path.clone(),
                 duration_secs: fp.duration_secs,
-                score,
                 match_kind: MatchKind::Similar,
             });
         }
@@ -425,28 +417,20 @@ pub fn find_duplicates_for(
         return Ok(Vec::new());
     }
 
-    // Add the target file itself with the max similarity score from the group
-    let max_score = matches
-        .iter()
-        .map(|f| f.score)
-        .fold(0.0_f64, f64::max);
+    // Add the target file itself
     matches.insert(
         0,
         DuplicateFile {
             path: target,
             duration_secs: target_fp.duration_secs,
-            score: max_score,
             match_kind: MatchKind::Similar,
         },
     );
 
-    matches.sort_by(|a, b| {
-        b.score
-            .partial_cmp(&a.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-
-    Ok(vec![DuplicateGroup { files: matches }])
+    Ok(vec![DuplicateGroup {
+        files: matches,
+        similarity: max_score,
+    }])
 }
 
 /// Generate candidate pairs using Locality-Sensitive Hashing (banding technique).
