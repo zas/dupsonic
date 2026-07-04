@@ -263,14 +263,7 @@ impl Database {
             .collect();
 
         let count = stale_ids.len();
-        if count > 0 {
-            conn.execute_batch("BEGIN")?;
-            for id in &stale_ids {
-                conn.execute("DELETE FROM band_hashes WHERE file_id = ?1", params![id])?;
-                conn.execute("DELETE FROM files WHERE id = ?1", params![id])?;
-            }
-            conn.execute_batch("COMMIT")?;
-        }
+        delete_ids_in_batches(&conn, &stale_ids)?;
 
         Ok(count)
     }
@@ -302,14 +295,7 @@ impl Database {
             .collect();
 
         let count = matching_ids.len();
-        if count > 0 {
-            conn.execute_batch("BEGIN")?;
-            for id in &matching_ids {
-                conn.execute("DELETE FROM band_hashes WHERE file_id = ?1", params![id])?;
-                conn.execute("DELETE FROM files WHERE id = ?1", params![id])?;
-            }
-            conn.execute_batch("COMMIT")?;
-        }
+        delete_ids_in_batches(&conn, &matching_ids)?;
 
         Ok(count)
     }
@@ -538,6 +524,22 @@ fn file_mtime_secs(meta: &std::fs::Metadata) -> i64 {
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+/// Maximum number of IDs to delete per transaction.
+const DELETE_BATCH_SIZE: usize = 1000;
+
+/// Delete file entries and their band hashes in chunked transactions.
+fn delete_ids_in_batches(conn: &Connection, ids: &[i64]) -> Result<()> {
+    for chunk in ids.chunks(DELETE_BATCH_SIZE) {
+        conn.execute_batch("BEGIN")?;
+        for id in chunk {
+            conn.execute("DELETE FROM band_hashes WHERE file_id = ?1", params![id])?;
+            conn.execute("DELETE FROM files WHERE id = ?1", params![id])?;
+        }
+        conn.execute_batch("COMMIT")?;
+    }
+    Ok(())
 }
 
 /// Metadata captured from the filesystem at scan time, to be stored alongside the fingerprint.
