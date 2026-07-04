@@ -27,7 +27,7 @@ pub fn file_sha256(path: &Path) -> Result<String> {
         }
         hasher.update(&buf[..n]);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(hex_encode(&hasher.finalize()))
 }
 
 /// Compute SHA-256 hash of the audio stream only (skipping metadata/tags).
@@ -82,5 +82,10 @@ pub fn audio_sha256(path: &Path) -> Result<String> {
         hasher.update(&packet.data);
     }
 
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(hex_encode(&hasher.finalize()))
+}
+
+/// Encode bytes as lowercase hex string.
+fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
