@@ -277,40 +277,16 @@ async fn api_action(
                     format!("File not found: {}", file_path.display()),
                 ));
             }
-            std::fs::remove_file(file_path).map_err(|e| {
+            // Use system trash (recoverable)
+            trash::delete(file_path).map_err(|e| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Failed to delete: {}", e),
-                )
-            })?;
-            Ok(Json(serde_json::json!({
-                "status": "deleted",
-                "path": file_path.to_string_lossy(),
-            })))
-        }
-        "trash" => {
-            // Move to a .dupsonic-trash directory next to the file
-            let trash_dir = file_path
-                .parent()
-                .unwrap_or(std::path::Path::new("."))
-                .join(".dupsonic-trash");
-            std::fs::create_dir_all(&trash_dir).map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Failed to create trash dir: {}", e),
-                )
-            })?;
-            let dest = trash_dir.join(file_path.file_name().unwrap_or_default());
-            std::fs::rename(file_path, &dest).map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Failed to move to trash: {}", e),
+                    format!("Failed to trash: {}", e),
                 )
             })?;
             Ok(Json(serde_json::json!({
                 "status": "trashed",
                 "path": file_path.to_string_lossy(),
-                "destination": dest.to_string_lossy(),
             })))
         }
         "exclude" => {
@@ -327,10 +303,7 @@ async fn api_action(
         }
         _ => Err((
             StatusCode::BAD_REQUEST,
-            format!(
-                "Unknown action: {}. Use: delete, trash, exclude",
-                req.action
-            ),
+            format!("Unknown action: {}. Use: delete, exclude", req.action),
         )),
     }
 }

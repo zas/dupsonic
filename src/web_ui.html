@@ -136,16 +136,15 @@ function renderGroups(groups) {
 
 function renderFile(group, file, index) {
   const badges = [];
-  if (index === 0) badges.push('<span class="file-badge badge-best">keep</span>');
+  if (index === 0) badges.push('<span class="file-badge badge-best">best</span>');
   if (file.match_kind === 'exact_copy') badges.push('<span class="file-badge badge-exact">exact copy</span>');
   else if (file.match_kind === 'same_audio') badges.push('<span class="file-badge badge-same-audio">same audio</span>');
   const duration = formatDuration(file.duration_secs);
-  const actions = index > 0 ? `
+  const actions = `
     <div class="file-actions">
-      <button class="secondary" onclick="doAction('${group.id}', ${index}, 'trash')">Trash</button>
       <button class="danger" onclick="doAction('${group.id}', ${index}, 'delete')">Delete</button>
       <button class="secondary" onclick="doAction('${group.id}', ${index}, 'exclude')">Exclude</button>
-    </div>` : '';
+    </div>`;
   return `
     <div class="file" id="file-${group.id.slice(0,8)}-${index}">
       <div class="file-info">
@@ -157,7 +156,7 @@ function renderFile(group, file, index) {
 }
 
 async function doAction(groupId, fileIndex, action) {
-  if (action === 'delete' && !confirm('Permanently delete this file?')) return;
+  if (action === 'delete' && !confirm('Move this file to trash?')) return;
   try {
     const r = await fetch('/api/action', {
       method: 'POST',
