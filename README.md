@@ -74,11 +74,11 @@ sudo mv dupsonic /usr/local/bin/
 
 Existing tools fail at cross-format duplicate detection:
 
-- **Czkawka, dupeGuru** — compare metadata or file hashes only. Same song in FLAC and MP3? Not detected.
-- **Duplicate Cleaner** — claims audio comparison but [struggles with cross-format matching](https://community.metabrainz.org/t/extremely-large-music-collection-needs-advice-on-what-dedupe-program-to-use/608781).
+- **[Czkawka](https://github.com/qarmin/czkawka), [dupeGuru](https://github.com/arsenetar/dupeguru)** — compare metadata or file hashes only. Same song in FLAC and MP3? Not detected.
+- **[Duplicate Cleaner](https://www.duplicatecleaner.com/)** — claims audio comparison but [struggles with cross-format matching](https://community.metabrainz.org/t/extremely-large-music-collection-needs-advice-on-what-dedupe-program-to-use/608781).
 - **Manual comparison** — impossible with 10k+ files.
 
-dupsonic fingerprints the actual audio using [Chromaprint](https://acoustid.org/chromaprint) (the same technology behind MusicBrainz Picard) and compares fingerprints to find duplicates.
+dupsonic fingerprints the actual audio using [Chromaprint](https://acoustid.org/chromaprint) (the same technology behind [MusicBrainz Picard](https://picard.musicbrainz.org/)) and compares fingerprints to find duplicates.
 
 ## Supported formats
 
@@ -111,7 +111,7 @@ See [ADVANCED.md](ADVANCED.md#web-ui) for configuration options.
 
 ## Similar projects
 
-**[soundalike](https://codeberg.org/derat/soundalike)** by Daniel Erat — a mature Go tool using Chromaprint. Lightweight, has built-in move/delete commands. Requires external `fpcalc`, defaults to 15s fingerprints, no MusicBrainz integration.
+**[soundalike](https://codeberg.org/derat/soundalike)** by Daniel Erat — a mature Go tool using Chromaprint. Lightweight, has built-in move/delete commands. Requires external `fpcalc`, defaults to 15s fingerprints, no [MusicBrainz](https://musicbrainz.org/) integration.
 
 ## Contributing
 
