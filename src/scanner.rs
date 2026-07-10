@@ -246,7 +246,18 @@ fn discover_audio_files(paths: &[PathBuf], ignore_set: &GlobSet) -> Vec<PathBuf>
             if ignore_set.is_match(path) {
                 continue;
             }
-            files.push(entry.into_path());
+            // Canonicalize so the same physical file always maps to one path
+            // string. WalkDir yields paths relative to the base argument (e.g.
+            // "./song.mp3" when scanning "."), so without this the same file
+            // reached via different spellings — a relative scan and an absolute
+            // one, or two symlinks — lands in the DB twice and is reported as an
+            // "exact copy" duplicate of itself. This also keeps stored paths
+            // consistent with exclude/include/`find --for`, which canonicalize.
+            let path = entry
+                .path()
+                .canonicalize()
+                .unwrap_or_else(|_| entry.into_path());
+            files.push(path);
         }
     }
 
