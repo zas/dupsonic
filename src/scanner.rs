@@ -239,6 +239,12 @@ fn discover_audio_files(paths: &[PathBuf], ignore_set: &GlobSet) -> Vec<PathBuf>
                 continue;
             }
             let path = entry.path();
+            // Skip macOS AppleDouble sidecar files (e.g. "._song.mp3"). macOS
+            // scatters these across non-HFS volumes (USB sticks, SD cards); they
+            // carry the audio extension but are metadata, not decodable audio.
+            if is_appledouble(path) {
+                continue;
+            }
             if !is_audio_file(path) {
                 continue;
             }
@@ -317,9 +323,38 @@ fn add_glob_pattern(builder: &mut GlobSetBuilder, pattern: &str) -> Result<()> {
     Ok(())
 }
 
+/// True for macOS AppleDouble sidecar files, whose names start with `._`.
+fn is_appledouble(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| n.starts_with("._"))
+        .unwrap_or(false)
+}
+
 fn is_audio_file(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
         .map(|ext| AUDIO_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn skips_appledouble_sidecars() {
+        assert!(is_appledouble(Path::new("/music/._song.mp3")));
+        assert!(is_appledouble(Path::new("._song.mp3")));
+        assert!(!is_appledouble(Path::new("/music/song.mp3")));
+        assert!(!is_appledouble(Path::new("/music/_song.mp3")));
+    }
+
+    #[test]
+    fn recognizes_audio_extensions() {
+        assert!(is_audio_file(Path::new("/music/song.mp3")));
+        assert!(is_audio_file(Path::new("/music/song.FLAC")));
+        assert!(!is_audio_file(Path::new("/music/cover.jpg")));
+        assert!(!is_audio_file(Path::new("/music/notes.txt")));
+    }
 }
