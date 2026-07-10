@@ -3,12 +3,15 @@
 //! Provides a single-page web interface for scanning, viewing duplicates,
 //! and acting on them. Designed for headless servers (NAS, Raspberry Pi).
 
-use axum::extract::{Query, State};
+use axum::extract::{ConnectInfo, Query, State};
 use axum::http::{header, StatusCode};
-use axum::response::{Html, IntoResponse, Json};
+use axum::middleware::{self, Next};
+use axum::response::{Html, IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use axum::Router;
+use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -41,13 +44,21 @@ impl Default for ScanStatus {
 }
 
 /// Start the web server.
-pub async fn serve(db: Database, db_path: PathBuf, bind: &str) -> anyhow::Result<()> {
+pub async fn serve(
+    db: Database,
+    db_path: PathBuf,
+    bind: &str,
+    allowed_ips: &[IpNet],
+) -> anyhow::Result<()> {
     let state = Arc::new(AppState {
         db,
         db_path,
         scan_status: Mutex::new(ScanStatus::default()),
         dupes: Mutex::new(Vec::new()),
     });
+
+    let allowed_ips: Arc<Vec<IpNet>> = Arc::new(allowed_ips.to_vec());
+    let allowed_ips_for_middleware = allowed_ips.clone();
 
     let app = Router::new()
         .route("/", get(index_html))
@@ -56,15 +67,34 @@ pub async fn serve(db: Database, db_path: PathBuf, bind: &str) -> anyhow::Result
         .route("/api/dupes", get(api_dupes))
         .route("/api/action", post(api_action))
         .route("/api/restore", post(api_restore))
+        .layer(middleware::from_fn(move |req, next| {
+            let allowed = allowed_ips_for_middleware.clone();
+            ip_access_control(req, next, allowed)
+        }))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(bind).await?;
     eprintln!("Web UI available at http://{}", bind);
+    if allowed_ips.is_empty() {
+        eprintln!("Access: unrestricted (use --allow-ip to restrict)");
+    } else {
+        eprintln!(
+            "Access restricted to: {}",
+            allowed_ips
+                .iter()
+                .map(|ip| ip.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
     eprintln!("Press Ctrl+C to stop.");
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
 
     Ok(())
 }
@@ -74,6 +104,48 @@ async fn shutdown_signal() {
         .await
         .expect("failed to install signal handler");
     eprintln!("\nShutting down.");
+}
+
+/// Middleware that restricts access based on client IP address.
+/// If the allow list is empty, all connections are permitted.
+/// Handles IPv4-mapped IPv6 addresses (::ffff:x.x.x.x).
+async fn ip_access_control(
+    req: axum::extract::Request,
+    next: Next,
+    allowed_ips: Arc<Vec<IpNet>>,
+) -> Response {
+    // If no restrictions configured, allow all
+    if allowed_ips.is_empty() {
+        return next.run(req).await;
+    }
+
+    // Extract the client IP from ConnectInfo
+    let client_ip = req
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ci| ci.0.ip());
+
+    let Some(client_ip) = client_ip else {
+        return (StatusCode::FORBIDDEN, "Access denied").into_response();
+    };
+
+    // Normalize IPv4-mapped IPv6 addresses (::ffff:192.168.1.1 → 192.168.1.1)
+    let normalized_ip = match client_ip {
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => IpAddr::V4(v4),
+            None => client_ip,
+        },
+        _ => client_ip,
+    };
+
+    // Check if the client IP is in any of the allowed ranges
+    let allowed = allowed_ips.iter().any(|net| net.contains(&normalized_ip));
+
+    if allowed {
+        next.run(req).await
+    } else {
+        (StatusCode::FORBIDDEN, "Access denied").into_response()
+    }
 }
 
 // --- API Endpoints ---
@@ -399,4 +471,141 @@ async fn index_html() -> impl IntoResponse {
         [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
         Html(include_str!("web_ui.html")),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+    use tower::ServiceExt;
+
+    /// Build a minimal router with the IP middleware for testing.
+    fn test_app(allowed_ips: Vec<IpNet>) -> Router {
+        let allowed = Arc::new(allowed_ips);
+
+        Router::new()
+            .route("/", get(|| async { "ok" }))
+            .layer(middleware::from_fn(move |req, next| {
+                let allowed = allowed.clone();
+                ip_access_control(req, next, allowed)
+            }))
+    }
+
+    /// Create a request with ConnectInfo set to the given IP.
+    fn request_from_ip(ip: IpAddr) -> Request<Body> {
+        let mut req = Request::builder().uri("/").body(Body::empty()).unwrap();
+        req.extensions_mut()
+            .insert(ConnectInfo(SocketAddr::new(ip, 12345)));
+        req
+    }
+
+    #[tokio::test]
+    async fn test_empty_allow_list_permits_all() {
+        let app = test_app(vec![]);
+        let req = request_from_ip(IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4)));
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_allowed_ip_permitted() {
+        let allowed: IpNet = "192.168.1.0/24".parse().unwrap();
+        let app = test_app(vec![allowed]);
+        let req = request_from_ip(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50)));
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_denied_ip_gets_403() {
+        let allowed: IpNet = "192.168.1.0/24".parse().unwrap();
+        let app = test_app(vec![allowed]);
+        let req = request_from_ip(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)));
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_exact_ip_allowed() {
+        // Single IP (parsed as /32)
+        let allowed: IpNet = "10.0.0.5/32".parse().unwrap();
+        let app = test_app(vec![allowed]);
+
+        let req = request_from_ip(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5)));
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_exact_ip_denied_other() {
+        let allowed: IpNet = "10.0.0.5/32".parse().unwrap();
+        let app = test_app(vec![allowed]);
+
+        let req = request_from_ip(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 6)));
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_ipv6_allowed() {
+        let allowed: IpNet = "fd00::/8".parse().unwrap();
+        let app = test_app(vec![allowed]);
+
+        let req = request_from_ip(IpAddr::V6(Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1)));
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_ipv6_denied() {
+        let allowed: IpNet = "fd00::/8".parse().unwrap();
+        let app = test_app(vec![allowed]);
+
+        let req = request_from_ip(IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)));
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_ipv4_mapped_ipv6_normalized() {
+        // Client connects as ::ffff:192.168.1.50 (IPv4-mapped IPv6)
+        // Allow list has 192.168.1.0/24 (IPv4)
+        let allowed: IpNet = "192.168.1.0/24".parse().unwrap();
+        let app = test_app(vec![allowed]);
+
+        // ::ffff:192.168.1.50
+        let v4_mapped = Ipv6Addr::new(0, 0, 0, 0, 0, 0xffff, 0xc0a8, 0x0132);
+        let req = request_from_ip(IpAddr::V6(v4_mapped));
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_multiple_ranges_any_match() {
+        let allowed = vec![
+            "10.0.0.0/8".parse::<IpNet>().unwrap(),
+            "172.16.0.0/12".parse::<IpNet>().unwrap(),
+            "192.168.0.0/16".parse::<IpNet>().unwrap(),
+        ];
+        let app = test_app(allowed);
+
+        let req = request_from_ip(IpAddr::V4(Ipv4Addr::new(172, 20, 5, 1)));
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_multiple_ranges_none_match() {
+        let allowed = vec![
+            "10.0.0.0/8".parse::<IpNet>().unwrap(),
+            "192.168.0.0/16".parse::<IpNet>().unwrap(),
+        ];
+        let app = test_app(allowed);
+
+        let req = request_from_ip(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)));
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
 }

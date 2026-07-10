@@ -62,8 +62,12 @@ ureq = { version = "3.0", features = ["json"] }
 axum = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 
+# IP access control (CIDR parsing)
+ipnet = "2.12"
+
 # System trash (for web UI delete action)
 trash = "5"
 
 [dev-dependencies]
 tempfile = "3.10"
+tower = "0.5"

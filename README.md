@@ -74,11 +74,11 @@ sudo mv dupsonic /usr/local/bin/
 
 Existing tools fail at cross-format duplicate detection:
 
-- **Czkawka, dupeGuru** — compare metadata or file hashes only. Same song in FLAC and MP3? Not detected.
-- **Duplicate Cleaner** — claims audio comparison but [struggles with cross-format matching](https://community.metabrainz.org/t/extremely-large-music-collection-needs-advice-on-what-dedupe-program-to-use/608781).
+- **[Czkawka](https://github.com/qarmin/czkawka), [dupeGuru](https://github.com/arsenetar/dupeguru)** — compare metadata or file hashes only. Same song in FLAC and MP3? Not detected.
+- **[Duplicate Cleaner](https://www.duplicatecleaner.com/)** — claims audio comparison but [struggles with cross-format matching](https://community.metabrainz.org/t/extremely-large-music-collection-needs-advice-on-what-dedupe-program-to-use/608781).
 - **Manual comparison** — impossible with 10k+ files.
 
-dupsonic fingerprints the actual audio using [Chromaprint](https://acoustid.org/chromaprint) (the same technology behind MusicBrainz Picard) and compares fingerprints to find duplicates.
+dupsonic fingerprints the actual audio using [Chromaprint](https://acoustid.org/chromaprint) (the same technology behind [MusicBrainz Picard](https://picard.musicbrainz.org/)) and compares fingerprints to find duplicates.
 
 ## Supported formats
 
@@ -102,16 +102,18 @@ Designed for 100k+ file collections: parallel scanning, incremental cache, LSH-b
 For headless servers (NAS, Raspberry Pi), dupsonic includes a built-in web interface:
 
 ```bash
-dupsonic serve              # http://0.0.0.0:8080
+dupsonic serve                                          # http://127.0.0.1:8080 (localhost)
+dupsonic serve --bind 0.0.0.0:8080                      # expose on network
+dupsonic serve --bind 0.0.0.0:8080 --allow-ip 192.168.1.0/24   # restrict to LAN
 ```
 
 Open from any browser on your network. Features: scan, find duplicates, view quality details, delete (moves to system trash with undo), exclude.
 
-See [ADVANCED.md](ADVANCED.md#web-ui) for configuration options.
+See [ADVANCED.md](ADVANCED.md#web-ui) for access control options (`--allow-ip`, `DUPSONIC_BIND`, `DUPSONIC_ALLOW_IP`).
 
 ## Similar projects
 
-**[soundalike](https://codeberg.org/derat/soundalike)** by Daniel Erat — a mature Go tool using Chromaprint. Lightweight, has built-in move/delete commands. Requires external `fpcalc`, defaults to 15s fingerprints, no MusicBrainz integration.
+**[soundalike](https://codeberg.org/derat/soundalike)** by Daniel Erat — a mature Go tool using Chromaprint. Lightweight, has built-in move/delete commands. Requires external `fpcalc`, defaults to 15s fingerprints, no [MusicBrainz](https://musicbrainz.org/) integration.
 
 ## Contributing
 
