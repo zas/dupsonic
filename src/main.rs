@@ -201,9 +201,13 @@ fn main() -> Result<()> {
         2 => "debug",
         _ => "trace",
     };
+    // Demote symphonia's internal tracing to debug level. Its messages
+    // (e.g. "probe reached EOF at 4096 bytes") lack file context and confuse users.
+    // We emit our own warnings with filename and user-friendly explanations instead.
+    let filter_str = format!("{filter},symphonia_core=debug,symphonia_format_ogg=debug");
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(filter)),
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&filter_str)),
         )
         .init();
 

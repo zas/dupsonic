@@ -191,7 +191,7 @@ pub fn scan(
                         }
                     }
                     Err(e) => {
-                        debug!("Failed to fingerprint {}: {}", path.display(), e);
+                        warn!("Skipping {}: {}", path.display(), e);
                         ScanResult::Error {
                             path: path.clone(),
                             meta: FileMeta::from_path(path),

@@ -4,7 +4,6 @@
 //! and [chromaprint-next](https://docs.rs/chromaprint-next) for fingerprint generation.
 //! The fingerprints are bit-identical to those produced by the reference `fpcalc` tool.
 
-use anyhow::{Context, Result};
 use chromaprint::{Algorithm, Fingerprinter};
 use std::path::Path;
 use symphonia::core::audio::{Audio, GenericAudioBufferRef};
@@ -17,6 +16,50 @@ use symphonia::core::meta::MetadataOptions;
 
 /// Maximum duration to fingerprint (in seconds). Chromaprint only needs ~120s.
 pub const DEFAULT_FINGERPRINT_DURATION_SECS: u64 = 120;
+
+/// Categorized reasons why fingerprinting can fail.
+#[derive(Debug)]
+pub enum FingerprintError {
+    /// File could not be opened (permissions, missing, locked).
+    OpenFailed(std::io::Error),
+    /// Audio format not recognized or file too short/corrupted to probe.
+    UnrecognizedFormat(String),
+    /// No audio track found in the container (e.g. video-only file).
+    NoAudioTrack,
+    /// Codec is unsupported or audio data is corrupted.
+    DecodeFailed(String),
+    /// Fingerprint was empty (file may be silence or too short).
+    EmptyFingerprint,
+}
+
+impl std::fmt::Display for FingerprintError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::OpenFailed(e) => write!(f, "could not open file ({e})"),
+            Self::UnrecognizedFormat(detail) => write!(
+                f,
+                "not a recognized audio format or file is too short/corrupted ({detail})"
+            ),
+            Self::NoAudioTrack => write!(f, "no audio track found in file"),
+            Self::DecodeFailed(detail) => {
+                write!(f, "unsupported or corrupted audio codec ({detail})")
+            }
+            Self::EmptyFingerprint => write!(
+                f,
+                "could not extract audio content (file may be silence or too short)"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for FingerprintError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::OpenFailed(e) => Some(e),
+            _ => None,
+        }
+    }
+}
 
 /// Result of fingerprinting a single audio file.
 #[derive(Debug, Clone)]
@@ -35,9 +78,11 @@ pub struct FingerprintResult {
 /// The fingerprint is generated from the first `max_duration_secs` of audio,
 /// but `duration_secs` reports the full file duration (critical for deduplication
 /// since chromaprint can't distinguish files that only differ after the fingerprinted portion).
-pub fn fingerprint_file(path: &Path, max_duration_secs: u64) -> Result<FingerprintResult> {
-    let file =
-        std::fs::File::open(path).with_context(|| format!("Failed to open: {}", path.display()))?;
+pub fn fingerprint_file(
+    path: &Path,
+    max_duration_secs: u64,
+) -> Result<FingerprintResult, FingerprintError> {
+    let file = std::fs::File::open(path).map_err(FingerprintError::OpenFailed)?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
 
     let mut hint = Hint::new();
@@ -52,19 +97,19 @@ pub fn fingerprint_file(path: &Path, max_duration_secs: u64) -> Result<Fingerpri
             FormatOptions::default(),
             MetadataOptions::default(),
         )
-        .with_context(|| format!("Failed to probe format: {}", path.display()))?;
+        .map_err(|e| FingerprintError::UnrecognizedFormat(e.to_string()))?;
 
     let track = format
         .default_track(TrackType::Audio)
-        .ok_or_else(|| anyhow::anyhow!("No audio track found in: {}", path.display()))?
+        .ok_or(FingerprintError::NoAudioTrack)?
         .clone();
 
     let audio_params = get_audio_codec_params(&track)
-        .ok_or_else(|| anyhow::anyhow!("No audio codec params in: {}", path.display()))?;
+        .ok_or_else(|| FingerprintError::DecodeFailed("no audio codec params".to_string()))?;
 
     let sample_rate = audio_params
         .sample_rate
-        .ok_or_else(|| anyhow::anyhow!("Unknown sample rate: {}", path.display()))?;
+        .ok_or_else(|| FingerprintError::DecodeFailed("unknown sample rate".to_string()))?;
     let channels = audio_params
         .channels
         .as_ref()
@@ -77,12 +122,12 @@ pub fn fingerprint_file(path: &Path, max_duration_secs: u64) -> Result<Fingerpri
 
     let mut decoder = symphonia::default::get_codecs()
         .make_audio_decoder(&audio_params, &AudioDecoderOptions::default())
-        .with_context(|| format!("Failed to create decoder: {}", path.display()))?;
+        .map_err(|e| FingerprintError::DecodeFailed(e.to_string()))?;
 
     let mut printer = Fingerprinter::new(Algorithm::default());
     printer
         .start(sample_rate, channels as u16)
-        .map_err(|e| anyhow::anyhow!("Failed to start fingerprinter: {e}"))?;
+        .map_err(|e| FingerprintError::DecodeFailed(format!("fingerprinter start: {e}")))?;
 
     let max_samples = max_duration_secs * sample_rate as u64 * channels as u64;
     let mut total_samples: u64 = 0;
@@ -97,7 +142,7 @@ pub fn fingerprint_file(path: &Path, max_duration_secs: u64) -> Result<Fingerpri
             {
                 break;
             }
-            Err(e) => return Err(e.into()),
+            Err(e) => return Err(FingerprintError::DecodeFailed(e.to_string())),
         };
 
         if packet.track_id != track_id {
@@ -107,7 +152,7 @@ pub fn fingerprint_file(path: &Path, max_duration_secs: u64) -> Result<Fingerpri
         let decoded = match decoder.decode(&packet) {
             Ok(buf) => buf,
             Err(symphonia::core::errors::Error::DecodeError(_)) => continue,
-            Err(e) => return Err(e.into()),
+            Err(e) => return Err(FingerprintError::DecodeFailed(e.to_string())),
         };
 
         if !finished_fingerprinting {
@@ -149,7 +194,7 @@ pub fn fingerprint_file(path: &Path, max_duration_secs: u64) -> Result<Fingerpri
 
     let fingerprint = printer.fingerprint().to_vec();
     if fingerprint.is_empty() {
-        anyhow::bail!("Empty fingerprint for: {}", path.display());
+        return Err(FingerprintError::EmptyFingerprint);
     }
 
     let duration_secs = full_duration_secs

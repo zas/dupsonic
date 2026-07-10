@@ -309,3 +309,134 @@ fn test_duplicate_classification_5_files() {
         );
     }
 }
+
+#[test]
+fn test_fingerprint_nonexistent_file_returns_open_failed() {
+    use dupsonic::fingerprint::FingerprintError;
+
+    let path = PathBuf::from("/nonexistent/path/to/audio.flac");
+    let result = fingerprint_file(&path, 120);
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, FingerprintError::OpenFailed(_)),
+        "Expected OpenFailed, got: {err:?}"
+    );
+    // Verify Display message is user-friendly
+    let msg = err.to_string();
+    assert!(
+        msg.contains("could not open file"),
+        "Error message should be user-friendly, got: {msg}"
+    );
+}
+
+#[test]
+fn test_fingerprint_non_audio_file_returns_unrecognized_format() {
+    use dupsonic::fingerprint::FingerprintError;
+
+    // Create a temporary file with garbage content but an audio extension
+    let dir = TempDir::new().unwrap();
+    let fake_audio = dir.path().join("not_audio.flac");
+    std::fs::write(&fake_audio, b"This is not audio data at all").unwrap();
+
+    let result = fingerprint_file(&fake_audio, 120);
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, FingerprintError::UnrecognizedFormat(_)),
+        "Expected UnrecognizedFormat, got: {err:?}"
+    );
+    let msg = err.to_string();
+    assert!(
+        msg.contains("not a recognized audio format"),
+        "Error message should be user-friendly, got: {msg}"
+    );
+}
+
+#[test]
+fn test_fingerprint_truncated_file_returns_error() {
+    use dupsonic::fingerprint::FingerprintError;
+
+    // Create a file with a valid FLAC magic number but truncated content
+    let dir = TempDir::new().unwrap();
+    let truncated = dir.path().join("truncated.flac");
+    // fLaC magic followed by garbage — enough to start probing but not enough to decode
+    let mut data = b"fLaC".to_vec();
+    data.extend_from_slice(&[0u8; 100]);
+    std::fs::write(&truncated, &data).unwrap();
+
+    let result = fingerprint_file(&truncated, 120);
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    // Could be UnrecognizedFormat or DecodeFailed depending on how far symphonia gets
+    assert!(
+        matches!(
+            err,
+            FingerprintError::UnrecognizedFormat(_)
+                | FingerprintError::DecodeFailed(_)
+                | FingerprintError::EmptyFingerprint
+                | FingerprintError::NoAudioTrack
+        ),
+        "Expected a structured error for truncated file, got: {err:?}"
+    );
+    // Regardless of variant, Display should produce a useful message
+    let msg = err.to_string();
+    assert!(!msg.is_empty(), "Error message should not be empty");
+}
+
+#[test]
+fn test_fingerprint_empty_file_returns_unrecognized_format() {
+    use dupsonic::fingerprint::FingerprintError;
+
+    let dir = TempDir::new().unwrap();
+    let empty = dir.path().join("empty.mp3");
+    std::fs::write(&empty, b"").unwrap();
+
+    let result = fingerprint_file(&empty, 120);
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, FingerprintError::UnrecognizedFormat(_)),
+        "Expected UnrecognizedFormat for empty file, got: {err:?}"
+    );
+}
+
+#[test]
+fn test_fingerprint_error_display_includes_details() {
+    use dupsonic::fingerprint::FingerprintError;
+
+    // Verify that each error variant produces a non-empty, descriptive message
+    let errors = [
+        FingerprintError::OpenFailed(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "permission denied",
+        )),
+        FingerprintError::UnrecognizedFormat("end of stream".to_string()),
+        FingerprintError::NoAudioTrack,
+        FingerprintError::DecodeFailed("unsupported codec".to_string()),
+        FingerprintError::EmptyFingerprint,
+    ];
+
+    let expected_fragments = [
+        "could not open file",
+        "not a recognized audio format",
+        "no audio track found",
+        "unsupported or corrupted audio codec",
+        "could not extract audio content",
+    ];
+
+    for (err, expected) in errors.iter().zip(expected_fragments.iter()) {
+        let msg = err.to_string();
+        assert!(
+            msg.contains(expected),
+            "FingerprintError::{:?} display should contain '{}', got: '{}'",
+            err,
+            expected,
+            msg
+        );
+    }
+}
