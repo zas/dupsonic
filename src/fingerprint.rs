@@ -4,8 +4,8 @@
 //! and [chromaprint-next](https://docs.rs/chromaprint-next) for fingerprint generation.
 //! The fingerprints are bit-identical to those produced by the reference `fpcalc` tool.
 
+use crate::container_repair;
 use chromaprint::{Algorithm, Fingerprinter};
-use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use symphonia::core::audio::{Audio, GenericAudioBufferRef};
 use symphonia::core::codecs::audio::{AudioCodecParameters, AudioDecoderOptions};
@@ -86,22 +86,17 @@ pub fn fingerprint_file(
     let file = std::fs::File::open(path).map_err(FingerprintError::OpenFailed)?;
     let file_len = file.metadata().map_err(FingerprintError::OpenFailed)?.len();
 
-    // Some MP4/M4A files are truncated (an interrupted download or copy): the
-    // `mdat` box header still advertises its original size, which now runs past
-    // the real end of the file. Symphonia's isomp4 demuxer discards such an
-    // mdat wholesale and then fails with "no atom pending read", even though the
-    // audio that IS present decodes fine. Detect this and rewrite the mdat size
-    // field to the bytes on disk so the available audio can still be
-    // fingerprinted (symphonia then hits a clean EOF at the truncation point).
-    let patches = mdat_size_patches(path, file_len);
+    // Some files carry container-level defects (e.g. a truncated MP4 whose
+    // `mdat` size overruns EOF) that symphonia rejects even though the audio
+    // present decodes fine. Detect them and overlay byte patches as the file
+    // is read so the available audio can still be fingerprinted.
+    let patches = container_repair::detect_repairs(&file, path, file_len);
     let source: Box<dyn MediaSource> = if patches.is_empty() {
         Box::new(file)
     } else {
-        Box::new(PatchedSource {
-            inner: file,
-            len: file_len,
-            patches,
-        })
+        Box::new(container_repair::PatchedSource::new(
+            file, file_len, patches,
+        ))
     };
     let mss = MediaSourceStream::new(source, Default::default());
 
@@ -249,130 +244,6 @@ fn get_track_duration(track: &Track, sample_rate: u32) -> Option<f64> {
         Some(secs)
     } else {
         track.num_frames.map(|n| n as f64 / sample_rate as f64)
-    }
-}
-
-/// MP4/M4A extensions that route to symphonia's isomp4 demuxer and can carry a
-/// truncated `mdat`. Raw AAC (`.aac`) is ADTS, not an ISO-BMFF container.
-const MP4_EXTENSIONS: &[&str] = &["m4a", "m4b", "m4p", "mp4", "mov"];
-
-fn is_mp4_container(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| MP4_EXTENSIONS.contains(&e.to_lowercase().as_str()))
-        .unwrap_or(false)
-}
-
-/// Scan the top-level atoms of an MP4/M4A file for an `mdat` box whose declared
-/// size overruns the end of the file, and return the byte patches that rewrite
-/// its size field to the number of bytes actually present.
-///
-/// Returns an empty vec for well-formed files (the common case), so the caller
-/// decodes the original file untouched. This only walks the small top-level
-/// atom headers, not the media data.
-fn mdat_size_patches(path: &Path, file_len: u64) -> Vec<(u64, u8)> {
-    if !is_mp4_container(path) {
-        return Vec::new();
-    }
-
-    let mut f = match std::fs::File::open(path) {
-        Ok(f) => f,
-        Err(_) => return Vec::new(),
-    };
-
-    let mut pos: u64 = 0;
-    let mut hdr = [0u8; 16];
-    while pos + 8 <= file_len {
-        if f.seek(SeekFrom::Start(pos)).is_err() || f.read_exact(&mut hdr[..8]).is_err() {
-            break;
-        }
-        let size32 = u32::from_be_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]);
-        let atom_type = [hdr[4], hdr[5], hdr[6], hdr[7]];
-
-        // Resolve the atom size and where/how wide its size field is.
-        let (atom_size, size_off, size_is_64) = if size32 == 1 {
-            // 64-bit size stored immediately after the type field.
-            if f.read_exact(&mut hdr[8..16]).is_err() {
-                break;
-            }
-            let size64 = u64::from_be_bytes(hdr[8..16].try_into().unwrap());
-            (size64, pos + 8, true)
-        } else if size32 == 0 {
-            // Size 0 already means "extends to end of file", and nothing can
-            // follow it — no repair needed or possible.
-            break;
-        } else {
-            (size32 as u64, pos, false)
-        };
-
-        if atom_size < 8 {
-            break; // malformed header; give up rather than loop
-        }
-
-        let atom_end = pos.saturating_add(atom_size);
-
-        if atom_type == *b"mdat" && atom_end > file_len {
-            // Rewrite the size field so the box ends exactly at EOF.
-            let corrected = file_len - pos;
-            let bytes_at = |slice: &[u8]| -> Vec<(u64, u8)> {
-                slice
-                    .iter()
-                    .enumerate()
-                    .map(|(i, &b)| (size_off + i as u64, b))
-                    .collect()
-            };
-            return if size_is_64 {
-                bytes_at(&corrected.to_be_bytes())
-            } else if corrected <= u32::MAX as u64 {
-                bytes_at(&(corrected as u32).to_be_bytes())
-            } else {
-                Vec::new() // corrected size won't fit a 32-bit field
-            };
-        }
-
-        pos = atom_end;
-    }
-
-    Vec::new()
-}
-
-/// A [`MediaSource`] that overlays a handful of single-byte patches onto a file
-/// as it is read, used to repair a truncated `mdat` box size (see
-/// [`mdat_size_patches`]). All other bytes pass through unchanged.
-struct PatchedSource {
-    inner: std::fs::File,
-    len: u64,
-    /// (absolute file offset, replacement byte).
-    patches: Vec<(u64, u8)>,
-}
-
-impl Read for PatchedSource {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let start = self.inner.stream_position()?;
-        let n = self.inner.read(buf)?;
-        let end = start + n as u64;
-        for &(off, val) in &self.patches {
-            if off >= start && off < end {
-                buf[(off - start) as usize] = val;
-            }
-        }
-        Ok(n)
-    }
-}
-
-impl Seek for PatchedSource {
-    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
-        self.inner.seek(pos)
-    }
-}
-
-impl MediaSource for PatchedSource {
-    fn is_seekable(&self) -> bool {
-        true
-    }
-
-    fn byte_len(&self) -> Option<u64> {
-        Some(self.len)
     }
 }
 

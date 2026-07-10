@@ -27,6 +27,8 @@
 
 /// AcoustID API client with rate limiting.
 pub mod acoustid;
+/// Detection and in-flight repair of malformed container headers.
+pub mod container_repair;
 /// SQLite-backed fingerprint cache with change detection.
 pub mod database;
 /// Execute commands on duplicate files (the non-kept ones).
