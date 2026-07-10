@@ -168,8 +168,14 @@ enum Commands {
     /// Start web UI server
     Serve {
         /// Address to bind to
-        #[arg(short, long, default_value = "0.0.0.0:8080")]
+        #[arg(short, long, default_value = "127.0.0.1:8080", env = "DUPSONIC_BIND")]
         bind: String,
+
+        /// Allow connections from these IP addresses or CIDR ranges (repeatable).
+        /// When set, only matching IPs can access the server; others get 403.
+        /// Supports IPv4 and IPv6. Examples: 192.168.1.0/24, 10.0.0.5, ::1
+        #[arg(long, env = "DUPSONIC_ALLOW_IP", value_delimiter = ',')]
+        allow_ip: Vec<String>,
     },
 }
 
@@ -435,9 +441,24 @@ fn main() -> Result<()> {
             clap_complete::generate(shell, &mut cmd, "dupsonic", &mut std::io::stdout());
             return Ok(());
         }
-        Commands::Serve { bind } => {
+        Commands::Serve { bind, allow_ip } => {
+            // Parse --allow-ip values into IpNet (single IPs become /32 or /128)
+            let allowed_ips: Vec<ipnet::IpNet> = allow_ip
+                .iter()
+                .map(|s| {
+                    s.parse::<ipnet::IpNet>().unwrap_or_else(|_| {
+                        // Try parsing as a single IP address (no prefix)
+                        let addr: std::net::IpAddr = s.parse().unwrap_or_else(|_| {
+                            eprintln!("Invalid IP or CIDR: {}", s);
+                            std::process::exit(1);
+                        });
+                        ipnet::IpNet::from(addr)
+                    })
+                })
+                .collect();
+
             let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(dupsonic::web::serve(db, db_path, &bind))?;
+            rt.block_on(dupsonic::web::serve(db, db_path, &bind, &allowed_ips))?;
         }
     }
 

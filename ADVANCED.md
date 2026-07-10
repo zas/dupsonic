@@ -205,11 +205,44 @@ Set this as the fpcalc path in Picard's *Options → Fingerprinting*. Run `dupso
 For headless servers (NAS, Raspberry Pi, OpenMediaVault), dupsonic includes a built-in web interface:
 
 ```bash
-dupsonic serve                          # http://0.0.0.0:8080
-dupsonic serve --bind 127.0.0.1:3000    # custom address/port
+dupsonic serve                          # http://127.0.0.1:8080 (localhost only)
+dupsonic serve --bind 0.0.0.0:8080      # expose on all interfaces
+dupsonic serve --bind 0.0.0.0:8080 --allow-ip 192.168.1.0/24   # LAN only
 ```
 
-Features:
+### Access control
+
+By default, the server binds to **localhost only** (`127.0.0.1:8080`). To expose it on the network, use `--bind`:
+
+```bash
+dupsonic serve --bind 0.0.0.0:8080
+```
+
+To restrict which IPs can connect, use `--allow-ip` (repeatable, supports CIDR notation for both IPv4 and IPv6):
+
+```bash
+dupsonic serve --bind 0.0.0.0:8080 --allow-ip 192.168.1.0/24
+dupsonic serve --bind 0.0.0.0:8080 --allow-ip 10.0.0.5 --allow-ip 10.0.0.6
+dupsonic serve --bind [::]:8080 --allow-ip fd00::/8 --allow-ip ::1
+```
+
+When `--allow-ip` is set, connections from non-matching IPs receive HTTP 403 Forbidden. When not set, all connections to the bound address are permitted.
+
+Environment variables are also supported:
+
+```bash
+export DUPSONIC_BIND=0.0.0.0:8080
+export DUPSONIC_ALLOW_IP=192.168.1.0/24,10.0.0.0/8
+dupsonic serve
+```
+
+| Flag | Env var | Default | Description |
+|------|---------|---------|-------------|
+| `--bind` | `DUPSONIC_BIND` | `127.0.0.1:8080` | Address and port to listen on |
+| `--allow-ip` | `DUPSONIC_ALLOW_IP` | *(none — allow all)* | Comma-separated IPs or CIDR ranges to allow |
+
+### Features
+
 - **Status dashboard** — file count, scan state
 - **Scan** — enter a path or re-scan stored paths (pre-filled from previous scans)
 - **Find duplicates** — view all groups with similarity %, classification badges, quality details (format, sample rate, bit depth, bitrate, size)

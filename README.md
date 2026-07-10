@@ -102,12 +102,14 @@ Designed for 100k+ file collections: parallel scanning, incremental cache, LSH-b
 For headless servers (NAS, Raspberry Pi), dupsonic includes a built-in web interface:
 
 ```bash
-dupsonic serve              # http://0.0.0.0:8080
+dupsonic serve                                          # http://127.0.0.1:8080 (localhost)
+dupsonic serve --bind 0.0.0.0:8080                      # expose on network
+dupsonic serve --bind 0.0.0.0:8080 --allow-ip 192.168.1.0/24   # restrict to LAN
 ```
 
 Open from any browser on your network. Features: scan, find duplicates, view quality details, delete (moves to system trash with undo), exclude.
 
-See [ADVANCED.md](ADVANCED.md#web-ui) for configuration options.
+See [ADVANCED.md](ADVANCED.md#web-ui) for access control options (`--allow-ip`, `DUPSONIC_BIND`, `DUPSONIC_ALLOW_IP`).
 
 ## Similar projects
 
