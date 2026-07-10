@@ -4,6 +4,7 @@
 //! and [chromaprint-next](https://docs.rs/chromaprint-next) for fingerprint generation.
 //! The fingerprints are bit-identical to those produced by the reference `fpcalc` tool.
 
+use crate::container_repair;
 use chromaprint::{Algorithm, Fingerprinter};
 use std::path::Path;
 use symphonia::core::audio::{Audio, GenericAudioBufferRef};
@@ -11,7 +12,7 @@ use symphonia::core::codecs::audio::{AudioCodecParameters, AudioDecoderOptions};
 use symphonia::core::codecs::CodecParameters;
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, Track, TrackType};
-use symphonia::core::io::MediaSourceStream;
+use symphonia::core::io::{MediaSource, MediaSourceStream};
 use symphonia::core::meta::MetadataOptions;
 
 /// Maximum duration to fingerprint (in seconds). Chromaprint only needs ~120s.
@@ -83,7 +84,21 @@ pub fn fingerprint_file(
     max_duration_secs: u64,
 ) -> Result<FingerprintResult, FingerprintError> {
     let file = std::fs::File::open(path).map_err(FingerprintError::OpenFailed)?;
-    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+    let file_len = file.metadata().map_err(FingerprintError::OpenFailed)?.len();
+
+    // Some files carry container-level defects (e.g. a truncated MP4 whose
+    // `mdat` size overruns EOF) that symphonia rejects even though the audio
+    // present decodes fine. Detect them and overlay byte patches as the file
+    // is read so the available audio can still be fingerprinted.
+    let patches = container_repair::detect_repairs(&file, path, file_len);
+    let source: Box<dyn MediaSource> = if patches.is_empty() {
+        Box::new(file)
+    } else {
+        Box::new(container_repair::PatchedSource::new(
+            file, file_len, patches,
+        ))
+    };
+    let mss = MediaSourceStream::new(source, Default::default());
 
     let mut hint = Hint::new();
     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
@@ -142,6 +157,13 @@ pub fn fingerprint_file(
             {
                 break;
             }
+            // A demuxer-level malformed-stream error (e.g. symphonia's isomp4
+            // "no atom pending read" on some iTunes-authored .m4a files) means
+            // the container can't be advanced further. Rather than discarding
+            // the whole file, stop reading and fingerprint whatever audio we've
+            // already decoded — this is usually the full track, since the error
+            // tends to fire on a trailing/unexpected atom after the last packet.
+            Err(symphonia::core::errors::Error::DecodeError(_)) => break,
             Err(e) => return Err(FingerprintError::DecodeFailed(e.to_string())),
         };
 
