@@ -9,6 +9,7 @@
 //! - chord.flac: 44.1kHz/16bit FLAC (10s, C major chord) — spectrally different
 //! - short.flac: 44.1kHz/16bit FLAC (10s, 440Hz sine)
 //! - long.flac: 44.1kHz/16bit FLAC (60s, 440Hz sine)
+//! - converted.opus: libopus encode of lowres.flac (regression fixture for issue #8)
 
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
@@ -28,6 +29,43 @@ fn test_fingerprint_audio_file() {
     let result = fingerprint_file(&path, 120).unwrap();
     assert!(!result.fingerprint.is_empty());
     assert!(result.duration_secs > 9.0 && result.duration_secs < 11.0);
+}
+
+/// Opus has no decoder in symphonia; dupsonic decodes it with the pure-Rust
+/// opus-decoder crate. This is a regression guard for GitHub issue #8, where
+/// every .opus file failed with "unsupported audio codec". The fixture
+/// (converted.opus) is a libopus encode of lowres.flac.
+#[test]
+fn test_fingerprint_opus_file() {
+    let path = fixtures_dir().join("converted.opus");
+    let result = fingerprint_file(&path, 120).unwrap();
+    assert!(
+        !result.fingerprint.is_empty(),
+        "Opus file should fingerprint, not fail as unsupported codec"
+    );
+    assert!(
+        result.duration_secs > 9.0 && result.duration_secs < 11.0,
+        "Opus duration should be ~10s, got {}",
+        result.duration_secs
+    );
+}
+
+/// The Opus fingerprint must match the audio content of the FLAC it was
+/// converted from (chromaprint is robust to lossy transcoding), proving we
+/// decode real PCM rather than garbage.
+#[test]
+fn test_opus_matches_source_flac() {
+    let flac = fixtures_dir().join("lowres.flac");
+    let opus = fixtures_dir().join("converted.opus");
+
+    let fp_flac = fingerprint_file(&flac, 120).unwrap();
+    let fp_opus = fingerprint_file(&opus, 120).unwrap();
+
+    let score = compare_fingerprints(&fp_flac.fingerprint, &fp_opus.fingerprint);
+    assert!(
+        score > 0.9,
+        "Opus transcode should fingerprint close to its FLAC source, got {score}"
+    );
 }
 
 #[test]

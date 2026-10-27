@@ -8,6 +8,7 @@ use crate::container_repair;
 use chromaprint::{Algorithm, Fingerprinter};
 use std::path::Path;
 use symphonia::core::audio::{Audio, GenericAudioBufferRef};
+use symphonia::core::codecs::audio::well_known::CODEC_ID_OPUS;
 use symphonia::core::codecs::audio::{AudioCodecParameters, AudioDecoderOptions};
 use symphonia::core::codecs::CodecParameters;
 use symphonia::core::formats::probe::Hint;
@@ -135,6 +136,33 @@ pub fn fingerprint_file(
     // Try to get duration from container metadata (most formats provide this)
     let full_duration_secs = get_track_duration(&track, sample_rate);
 
+    // Opus has no symphonia decoder: symphonia demuxes the Ogg container and
+    // hands us raw Opus packets, but `get_codecs()` has no Opus implementation,
+    // so `make_audio_decoder` would fail with "unsupported audio codec". Decode
+    // the packets ourselves with the pure-Rust opus-decoder crate. Opus always
+    // decodes to 48 kHz; `sample_rate`/`channels` here come from the OpusHead
+    // the Ogg mapper parsed, so they already reflect that.
+    //
+    // This branch is a stopgap for symphonia's missing Opus decoder (tracked
+    // upstream in pdeljanov/Symphonia#8, open since 2020; the native-decoder
+    // PRs #313/#398 remain WIP as of this writing, and no released symphonia —
+    // including 0.6.1 — ships one). Once symphonia registers an Opus decoder in
+    // `get_codecs()` (either natively or via an adapter such as
+    // symphonia-adapter-libopus), this special case becomes redundant: the
+    // generic `make_audio_decoder` path below would handle Opus like any other
+    // codec. At that point this `if` block, `fingerprint_opus`, and the
+    // opus-decoder dependency can simply be deleted.
+    if audio_params.codec == CODEC_ID_OPUS {
+        return fingerprint_opus(
+            &mut *format,
+            track_id,
+            sample_rate,
+            channels,
+            max_duration_secs,
+            full_duration_secs,
+        );
+    }
+
     let mut decoder = symphonia::default::get_codecs()
         .make_audio_decoder(&audio_params, &AudioDecoderOptions::default())
         .map_err(|e| FingerprintError::DecodeFailed(e.to_string()))?;
@@ -209,6 +237,120 @@ pub fn fingerprint_file(
             // Past fingerprint window, just counting samples for duration
             let num_frames = generic_buf_frames(&decoded);
             total_samples += (num_frames * channels) as u64;
+        }
+    }
+
+    printer.finish().ok();
+
+    let fingerprint = printer.fingerprint().to_vec();
+    if fingerprint.is_empty() {
+        return Err(FingerprintError::EmptyFingerprint);
+    }
+
+    let duration_secs = full_duration_secs
+        .unwrap_or_else(|| total_samples as f64 / (sample_rate as f64 * channels as f64));
+
+    Ok(FingerprintResult {
+        fingerprint,
+        duration_secs,
+    })
+}
+
+/// Fingerprint an Ogg Opus stream.
+///
+/// Symphonia's Ogg demuxer identifies Opus and emits intact Opus packets, but
+/// the library ships no Opus decoder. We decode packets with the pure-Rust
+/// `opus-decoder` crate and feed the resulting interleaved i16 PCM to
+/// chromaprint, mirroring the window/duration handling of the generic path.
+///
+/// Opus always decodes at 48 kHz; `sample_rate` is therefore 48000 and
+/// `channels` is the channel count from the OpusHead identification header.
+///
+/// Note: unlike symphonia's decoders, this does not trim the OpusHead pre-skip
+/// (encoder delay, typically ~80 samples). That padding is immaterial here —
+/// chromaprint downsamples to 11025 Hz, so <2 ms of leading silence does not
+/// change the fingerprint (verified bit-identical against fpcalc). It would
+/// matter for playback, but this code path only fingerprints.
+fn fingerprint_opus(
+    format: &mut dyn symphonia::core::formats::FormatReader,
+    track_id: u32,
+    sample_rate: u32,
+    channels: usize,
+    max_duration_secs: u64,
+    full_duration_secs: Option<f64>,
+) -> Result<FingerprintResult, FingerprintError> {
+    use opus_decoder::OpusDecoder;
+
+    // opus-decoder supports 1 or 2 channels. Opus files with more channels use
+    // a multistream mapping that this decoder path does not handle.
+    if channels == 0 || channels > 2 {
+        return Err(FingerprintError::DecodeFailed(format!(
+            "unsupported Opus channel count: {channels}"
+        )));
+    }
+
+    let mut decoder = OpusDecoder::new(sample_rate, channels)
+        .map_err(|e| FingerprintError::DecodeFailed(format!("opus decoder init: {e:?}")))?;
+
+    let mut printer = Fingerprinter::new(Algorithm::default());
+    printer
+        .start(sample_rate, channels as u16)
+        .map_err(|e| FingerprintError::DecodeFailed(format!("fingerprinter start: {e}")))?;
+
+    // Maximum decoded samples per channel for a single Opus packet (120 ms at
+    // 48 kHz). Reused as the per-packet output buffer.
+    let max_frame = OpusDecoder::MAX_FRAME_SIZE_48K;
+    let mut pcm = vec![0i16; max_frame * channels];
+
+    let max_samples = max_duration_secs * sample_rate as u64 * channels as u64;
+    let mut total_samples: u64 = 0;
+    let mut finished_fingerprinting = false;
+
+    loop {
+        let packet = match format.next_packet() {
+            Ok(Some(packet)) => packet,
+            Ok(None) => break,
+            Err(symphonia::core::errors::Error::IoError(ref e))
+                if e.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
+                break;
+            }
+            // Demuxer-level malformed-stream error: stop and fingerprint what we
+            // have, matching the behaviour of the generic decode path.
+            Err(symphonia::core::errors::Error::DecodeError(_)) => break,
+            Err(e) => return Err(FingerprintError::DecodeFailed(e.to_string())),
+        };
+
+        if packet.track_id != track_id {
+            continue;
+        }
+
+        // Decode this Opus packet to interleaved i16 PCM. Skip packets the
+        // decoder rejects rather than failing the whole file.
+        let frames = match decoder.decode(&packet.data, &mut pcm, false) {
+            Ok(n) => n,
+            Err(_) => continue,
+        };
+
+        if frames == 0 {
+            continue;
+        }
+
+        let samples = &pcm[..frames * channels];
+
+        if !finished_fingerprinting {
+            printer.feed(samples).ok();
+            total_samples += samples.len() as u64;
+
+            if total_samples >= max_samples {
+                finished_fingerprinting = true;
+                if full_duration_secs.is_some() {
+                    break;
+                }
+            }
+        } else {
+            // Past the fingerprint window, keep counting for duration.
+            total_samples += samples.len() as u64;
         }
     }
 

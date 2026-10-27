@@ -20,6 +20,10 @@ symphonia = { version = "0.6", features = ["all"] }
 # Acoustic fingerprinting (bit-identical to C chromaprint/fpcalc)
 chromaprint-next = "0.1"
 
+# Opus decoding (pure Rust, no FFI). Symphonia demuxes Ogg Opus but ships no
+# Opus decoder, so we decode Opus packets ourselves and feed PCM to chromaprint.
+opus-decoder = "0.1"
+
 # Database/cache
 rusqlite = { version = "0.40", features = ["bundled"] }
 
