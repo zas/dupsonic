@@ -17,7 +17,7 @@ jobs:
     name: Verify version matches tag
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check Cargo.toml version == tag
         run: |
@@ -55,7 +55,7 @@ jobs:
             archive: dupsonic-windows-x86_64.zip
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Pin to the same version as rust-toolchain.toml so the target std we
       # install below is added to the toolchain that actually runs the build.
@@ -95,7 +95,7 @@ jobs:
           7z a ../../../${{ matrix.archive }} dupsonic.exe
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.archive }}
           path: ${{ matrix.archive }}
@@ -105,9 +105,9 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
