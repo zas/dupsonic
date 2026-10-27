@@ -57,9 +57,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Pin to the same version as rust-toolchain.toml so the target std we
+      # install below is added to the toolchain that actually runs the build.
+      # (With a floating `@stable` here but a pinned rust-toolchain.toml, the
+      # cross-target std could be installed against a different toolchain than
+      # the one cargo selects, causing "can't find crate for std".)
+      - uses: dtolnay/rust-toolchain@1.99.1
         with:
           targets: ${{ matrix.target }}
+
+      # Belt-and-suspenders: ensure the target's std is present for the pinned
+      # toolchain before cross-compiling.
+      - name: Add Rust target
+        run: rustup target add ${{ matrix.target }}
 
       - name: Install cross-compilation tools (Linux ARM)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
