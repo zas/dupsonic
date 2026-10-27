@@ -8,8 +8,31 @@ permissions:
   contents: write
 
 jobs:
+  # Fail fast if the crate version and the pushed tag disagree. This guards
+  # against tagging a release before bumping Cargo.toml (the binaries embed
+  # CARGO_PKG_VERSION, so a mismatch ships a wrong `--version`). Gates the
+  # build matrix below via `needs`, so a mismatch produces no artifacts and
+  # no GitHub Release.
+  verify-version:
+    name: Verify version matches tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Cargo.toml version == tag
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          crate="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          echo "tag version:   $tag"
+          echo "crate version: $crate"
+          if [ "$tag" != "$crate" ]; then
+            echo "::error::Cargo.toml version ($crate) does not match tag ($tag). Bump Cargo.toml before tagging." >&2
+            exit 1
+          fi
+
   build:
     name: Build (${{ matrix.target }})
+    needs: verify-version
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
