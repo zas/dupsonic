@@ -2,6 +2,7 @@
 name = "dupsonic"
 version = "0.2.5"
 edition = "2021"
+rust-version = "1.88"
 description = "Find duplicate audio files using acoustic fingerprinting (chromaprint/AcoustID)"
 license = "GPL-2.0-or-later"
 repository = "https://github.com/zas/dupsonic"
@@ -15,7 +16,7 @@ clap = { version = "4.5", features = ["derive", "env"] }
 clap_complete = "4.5"
 
 # Audio decoding
-symphonia = { version = "0.6", features = ["all"] }
+symphonia = { version = "0.6.1", features = ["all"] }
 
 # Acoustic fingerprinting (bit-identical to C chromaprint/fpcalc)
 chromaprint-next = "0.1"
