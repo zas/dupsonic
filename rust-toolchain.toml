@@ -1,0 +1,7 @@
+[toolchain]
+# Pin a specific stable release so local builds and CI use the same compiler
+# and the same clippy/rustfmt lint set. This avoids "passes locally, fails in
+# CI" skew when the floating `stable` channel advances and enables new lints.
+# Bump deliberately alongside a CI run.
+channel = "1.99.1"
+components = ["clippy", "rustfmt"]

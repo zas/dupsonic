@@ -9,6 +9,11 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# Note: the test/clippy/fmt jobs pin the same Rust version as
+# rust-toolchain.toml so local and CI use an identical compiler and lint set.
+# When bumping the pinned version, update rust-toolchain.toml AND the three
+# `dtolnay/rust-toolchain@<version>` references below together.
+
 jobs:
   test:
     name: Test (${{ matrix.os }})
@@ -21,7 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.1
 
       - uses: Swatinem/rust-cache@v2
 
@@ -40,7 +45,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.1
         with:
           components: clippy
 
@@ -55,9 +60,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.1
         with:
           components: rustfmt
 
       - name: Check formatting
         run: cargo fmt --all -- --check
+
+  msrv:
+    name: MSRV (1.88)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Verify the crate still builds on its declared minimum supported Rust
+      # version (rust-version in Cargo.toml). Pinned independently of the dev
+      # toolchain so this job actually exercises the MSRV floor.
+      - uses: dtolnay/rust-toolchain@1.88.0
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build on MSRV
+        run: cargo build --verbose
